@@ -1,0 +1,6 @@
+.godot/
+*.tmp
+
+build/
+dist/
+node_modules/
