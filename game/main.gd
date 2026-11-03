@@ -1,6 +1,11 @@
 extends Node2D
 ## A self-contained playable vertical slice. World coordinates use 24px cells.
 const Progression = preload("res://game/progression.gd")
+const Items = preload("res://game/items.gd")
+const InventoryLayout = preload("res://game/inventory_layout.gd")
+const Hotbar = preload("res://game/hotbar.gd")
+const FarmUI = preload("res://game/ui/farm_ui.gd")
+const Effects = preload("res://game/work_effects.gd")
 const TILE := 24
 const WORLD := Vector2i(48, 36)
 const SAVE_VERSION := 1
@@ -14,6 +19,11 @@ var direction := 0
 var walk_clock := 0.0
 var moving := false
 var selected := 0
+var hotbar = Hotbar.new()
+var inventory_layout = InventoryLayout.new()
+var hud: CanvasLayer
+var effects = Effects.new()
+var temporary_item := ""
 var day := 1
 var minutes := 360.0
 var energy := 100
@@ -25,16 +35,9 @@ var plots: Dictionary = {}
 var buildings: Array[Vector2i] = []
 var camera: Camera2D
 var ui: CanvasLayer
-var stats: Label
-var inventory_label: Label
-var hint: Label
-var objective: Label
 var notice: Label
-var clock_label: Label
-var tool_buttons: Array[Button] = []
 var modal: PanelContainer
 var modal_body: VBoxContainer
-var overlay: ColorRect
 var sound: AudioStreamPlayer
 var particles: Array[Dictionary] = []
 var notification_time := 0.0
@@ -49,7 +52,6 @@ var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "cra
 var progression = Progression.new()
 var workshop := Vector2i(-1, -1)
 var build_kind := "warehouse"
-var workshop_status: Label
 var muted := false
 var test_mode := false
 var save_path := "user://farm_v1.json"
@@ -58,7 +60,6 @@ var font: Font
 var hovered := Vector2i.ZERO
 var load_warning := ""
 var test_failures := 0
-var styled_tool := -1
 var soil_styles: Dictionary = {}
 var web_save_callback: JavaScriptObject
 var web_platform: JavaScriptObject
@@ -118,6 +119,7 @@ func _generate_resources() -> void:
 func _process(delta: float) -> void:
  if web_platform != null:
   web_paused = bool(web_platform.paused)
+  hud.block_pointer(web_paused)
   web_platform.gameplay(not modal.visible and not web_paused)
   AudioServer.set_bus_mute(0, muted or web_paused)
   if web_paused:
@@ -128,7 +130,8 @@ func _process(delta: float) -> void:
    return
   web_was_paused = false
   if bool(web_platform.takeAction()) and not modal.visible:
-   queued_action = _cell(player + facing * TILE)
+   queued_action = _front_cell()
+ effects.update(delta,self)
  elapsed += delta
  action_cooldown = maxf(0, action_cooldown - delta)
  if queued_action != null:
@@ -144,6 +147,7 @@ func _process(delta: float) -> void:
   if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT): input.x += 1
   if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP): input.y -= 1
   if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN): input.y += 1
+  if effects.active(): input=Vector2.ZERO
   moving = input.length_squared() > 0
   if moving:
    facing = input.normalized()
@@ -172,6 +176,11 @@ func _process(delta: float) -> void:
  _update_ui()
  queue_redraw()
 
+func _front_cell() -> Vector2i:
+ var step:=Vector2i(roundi(facing.x),roundi(facing.y))
+ if step==Vector2i.ZERO: step=Vector2i.DOWN
+ return _cell(player)+step
+
 func _cell(p: Vector2) -> Vector2i:
  return Vector2i(floori(p.x / TILE), floori(p.y / TILE))
 
@@ -190,32 +199,58 @@ func _can_stand(p: Vector2) -> bool:
   if _solid(_cell(p + offset)): return false
  return true
 
+func _input(event: InputEvent) -> void:
+ if not is_instance_valid(hud): return
+ if web_platform!=null and bool(web_platform.paused):
+  get_viewport().set_input_as_handled()
+  return
+ if event is InputEventKey and event.pressed and not event.echo:
+  if event.physical_keycode==KEY_I or event.keycode==KEY_TAB:
+   if modal.visible and hud.view=="inventory": modal.hide()
+   else: _inventory_menu()
+   get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
  if web_platform != null and bool(web_platform.paused): return
  if event is InputEventKey and event.pressed and not event.echo:
   if event.keycode == KEY_ESCAPE:
    if modal.visible: modal.hide()
+   elif selected==6: _equip("hand")
    else: _help()
    get_viewport().set_input_as_handled()
    return
-  if modal.visible: return
-  if event.keycode >= KEY_1 and event.keycode <= KEY_7: selected = event.keycode - KEY_1
-  if event.keycode == KEY_7: _catalog()
-  if event.physical_keycode == KEY_E or event.keycode == KEY_SPACE: queued_action = _cell(player + facing * TILE)
-  if event.physical_keycode == KEY_H: _help()
-  if event.keycode == KEY_F5:
+  if event.physical_keycode==KEY_B: _catalog(); return
+  if event.keycode==KEY_F5:
    if _save_game(): _notify("Хозяйство сохранено")
-  if event.physical_keycode == KEY_M:
-   muted = not muted
+   return
+  var slot := -1
+  if event.keycode>=KEY_1 and event.keycode<=KEY_9: slot=event.keycode-KEY_1
+  elif event.keycode==KEY_0: slot=9
+  if slot>=0:
+   hud.slot_pressed(slot)
+   return
+  if modal.visible: return
+  if event.physical_keycode==KEY_E or event.keycode==KEY_SPACE: queued_action=_front_cell()
+  if event.physical_keycode==KEY_H: _help()
+  if event.physical_keycode==KEY_M:
+   muted=not muted
    _notify("Звук выключен" if muted else "Звук включён")
  if modal.visible: return
  if event is InputEventMouseButton and event.pressed:
-  if event.button_index == MOUSE_BUTTON_LEFT: queued_action = _cell(get_global_mouse_position())
-  elif event.button_index == MOUSE_BUTTON_WHEEL_UP: selected = posmod(selected - 1, 7)
-  elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN: selected = (selected + 1) % 7
+  if event.button_index==MOUSE_BUTTON_LEFT: queued_action=_cell(get_global_mouse_position())
+  elif event.button_index==MOUSE_BUTTON_WHEEL_UP: _select_slot(posmod(hotbar.active-1,10),false)
+  elif event.button_index==MOUSE_BUTTON_WHEEL_DOWN: _select_slot((hotbar.active+1)%10,false)
 
 func _act(c: Vector2i) -> bool:
+ var previous_kind := ""
+ if resources.has(c): previous_kind=resources[c].kind
  var success := _perform_action(c)
+ if success and not modal.visible and selected>=0 and selected<=5:
+  effects.start(selected,player,c,previous_kind if not resources.has(c) else "")
+  action_cooldown=maxf(action_cooldown,effects.duration)
+  var delta_direction:=Vector2(c*TILE+Vector2i(12,12))-player
+  if delta_direction.length_squared()>0: facing=delta_direction.normalized()
+  direction=(3 if delta_direction.x>0 else 2) if absf(delta_direction.x)>absf(delta_direction.y) else (0 if delta_direction.y>0 else 1)
  if success and web_platform != null: _save_game()
  return success
 
@@ -235,13 +270,15 @@ func _perform_action(c: Vector2i) -> bool:
   _workshop_menu(); return true
  if not _in_world(c) or water.has(c):
   _notify("Здесь нельзя работать"); return false
+ if selected<0:
+  _notify("Этот предмет используется в строительстве или мастерской"); return false
  if selected == 0:
   if plots.has(c) and plots[c].stage >= 3:
    bag.turnip += 1
    _gain_xp(5)
    plots[c] = {"stage": -1, "wet": false}
    quest_stage = maxi(quest_stage, 3)
-   _burst(c, Color("e9c7a0")); _play("pick"); _notify("Репа собрана! Продайте её у прилавка.")
+   _notify("Репа собрана! Продайте её у прилавка.")
    return true
   _notify("Выберите инструмент внизу или клавишами 1–7"); return false
  if selected == 6: return _build(c)
@@ -255,7 +292,7 @@ func _perform_action(c: Vector2i) -> bool:
    _notify("Для дерева нужен топор, для камня — кирка"); return false
   energy -= energy_cost
   resources[c].hp -= progression.tool_level
-  _burst(c, Color("d9bb83") if kind == "tree" else Color("adb4b3")); _play("pick")
+
   if resources[c].hp <= 0:
    resources.erase(c)
    _gain_xp(3)
@@ -274,7 +311,7 @@ func _perform_action(c: Vector2i) -> bool:
   if plots[c].wet: _notify("Сегодня уже полито"); return false
   plots[c].wet = true
   energy -= energy_cost
-  _burst(c, Color("9dc7d1"))
+
  elif selected == 3:
   if not plots.has(c): _notify("Сначала подготовьте землю мотыгой"); return false
   if plots[c].stage != -1: _notify("На грядке уже что-то растёт"); return false
@@ -284,7 +321,6 @@ func _perform_action(c: Vector2i) -> bool:
   energy -= energy_cost
   quest_stage = maxi(quest_stage, 2)
  else: return false
- _play("plant")
  return true
 
 func _build_valid(c: Vector2i) -> bool:
@@ -384,6 +420,7 @@ func _draw() -> void:
    draw_line(p, p + Vector2(5, 0), Color(0.75, 0.87, 0.81, 0.5 + sin(elapsed * 2 + c.x) * 0.25))
  # Painter's sorting by feet position, including tall trees and buildings.
  var objects: Array[Dictionary] = []
+ if effects.active() and effects.ghost!="": objects.append({"y": (effects.target.y+1)*TILE,"kind":"ghost","cell":effects.target})
  for c in resources:
   objects.append({"y": (c.y + 1) * TILE, "kind": resources[c].kind, "cell": c})
  objects.append({"y": HOUSE.end.y * TILE, "kind": "house", "cell": HOUSE.position})
@@ -394,6 +431,8 @@ func _draw() -> void:
  objects.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.y < b.y)
  for item in objects:
   var p := Vector2(item.cell * TILE)
+  if effects.active() and effects.progress()>0.45 and item.cell==effects.target and item.kind in ["tree","rock"]:
+   p.x+=round(sin(effects.progress()*40)*2*(1.0-effects.progress()))
   match item.kind:
    "tree": draw_texture(textures.tree, p + Vector2(-20 + round(sin(elapsed * 1.5 + p.x) * 0.6), -52))
    "rock": draw_texture(textures.rock, p + Vector2(-4, -4))
@@ -408,15 +447,12 @@ func _draw() -> void:
     if progression.has_products():
      draw_rect(Rect2(p + Vector2(27, -40), Vector2(18, 13)), Color("e1c47c"))
      draw_string(font, p + Vector2(33, -30), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("34574a"))
+   "ghost": effects.draw_ghost(self)
    "shop": _draw_shop(p)
    "player":
     var frame := int(walk_clock) % 4 if moving else 0
-    draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32))
-    if action_cooldown > 0 and selected in [1, 2, 4, 5]:
-     var swing := facing.rotated((action_cooldown / 0.18 - 0.5) * 1.5)
-     var hand := player.round() + Vector2(0, -11)
-     draw_line(hand, hand + swing * 16, Color("c8aa71"), 2)
-     draw_rect(Rect2(hand + swing * 16 - Vector2(3, 2), Vector2(7, 4)), Color("a4bcc0"))
+    draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28)+effects.body_offset(), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32))
+    effects.draw_tool(self,player.round())
  if not modal.visible:
   var target := hovered
   var near := Vector2(target * TILE + Vector2i(12, 12)).distance_to(player) <= TILE * 2.25
@@ -448,197 +484,55 @@ func _world_style(color: Color) -> StyleBoxFlat:
  soil_styles[color] = s
  return s
 
-func _panel_style(bg: String = "263f3d", border: String = "6f8270") -> StyleBoxFlat:
- var s := StyleBoxFlat.new()
- s.bg_color = Color(bg)
- s.border_color = Color(border)
- s.set_border_width_all(1)
- s.set_corner_radius_all(5)
- s.content_margin_left = 14
- s.content_margin_right = 14
- s.content_margin_top = 10
- s.content_margin_bottom = 10
- return s
-
-func _label(text: String, size: int = 14, color: String = "f1e6c9") -> Label:
- var label := Label.new()
- label.text = text
- label.add_theme_font_override("font", font)
- label.add_theme_font_size_override("font_size", size)
- label.add_theme_color_override("font_color", Color(color))
- return label
-
-func _button(text: String, callback: Callable) -> Button:
- var b := Button.new()
- b.text = text
- b.add_theme_font_override("font", font)
- b.add_theme_font_size_override("font_size", 13)
- b.add_theme_color_override("font_color", Color("f2e5c5"))
- b.add_theme_stylebox_override("normal", _panel_style("304a45", "5f7566"))
- b.add_theme_stylebox_override("disabled", _panel_style("293e39", "465c50"))
- b.add_theme_color_override("font_disabled_color", Color("86988a"))
- b.add_theme_stylebox_override("hover", _panel_style("496456", "c1b481"))
- b.add_theme_stylebox_override("pressed", _panel_style("667855", "e0c58d"))
- b.focus_mode = Control.FOCUS_NONE
- b.pressed.connect(callback)
- return b
-
 func _make_ui() -> void:
- ui = CanvasLayer.new()
- add_child(ui)
- var top := PanelContainer.new()
- top.position = Vector2(18, 16)
- top.size = Vector2(260, 76)
- top.add_theme_stylebox_override("panel", _panel_style())
- ui.add_child(top)
- var v := VBoxContainer.new()
- top.add_child(v)
- v.add_child(_label("ТИХАЯ ДОЛИНА", 19))
- v.add_child(_label("УСАДЬБА У СТАРОГО ПРУДА · 0.2", 10, "aabd9d"))
- stats = _label("", 13)
- v.add_child(stats)
- var time_panel := PanelContainer.new()
- time_panel.position = Vector2(734, 16)
- time_panel.size = Vector2(208, 65)
- time_panel.add_theme_stylebox_override("panel", _panel_style())
- ui.add_child(time_panel)
- var time_v := VBoxContainer.new()
- time_panel.add_child(time_v)
- clock_label = _label("", 17)
- time_v.add_child(clock_label)
- time_v.add_child(_label("ВЕСНА   /   СОЛНЕЧНО", 10, "b6c4a5"))
- var tasks := PanelContainer.new()
- tasks.position = Vector2(18, 105)
- tasks.size = Vector2(258, 65)
- tasks.add_theme_stylebox_override("panel", _panel_style("30483e", "6b8068"))
- ui.add_child(tasks)
- var task_v := VBoxContainer.new()
- tasks.add_child(task_v)
- task_v.add_child(_label("НОВОЕ НАЧАЛО", 11, "d9c48e"))
- objective = _label("", 12)
- task_v.add_child(objective)
- var footer := PanelContainer.new()
- footer.position = Vector2(155, 442)
- footer.size = Vector2(650, 82)
- footer.add_theme_stylebox_override("panel", _panel_style())
- ui.add_child(footer)
- var foot_v := VBoxContainer.new()
- footer.add_child(foot_v)
- var row := HBoxContainer.new()
- row.add_theme_constant_override("separation", 5)
- foot_v.add_child(row)
- for i in range(7):
-  var index := i
-  var b := _button(str(i + 1) + "  " + TOOLS[i], func() -> void:
-   selected = index
-   if index == 6: _catalog())
-  b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  row.add_child(b)
-  tool_buttons.append(b)
- inventory_label = _label("", 12, "cfceac")
- inventory_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
- foot_v.add_child(inventory_label)
- hint = _label("", 12)
- hint.position = Vector2(0, 416)
- hint.size.x = 960
- hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
- hint.add_theme_color_override("font_shadow_color", Color("243d36"))
- hint.add_theme_constant_override("shadow_offset_x", 1)
- hint.add_theme_constant_override("shadow_offset_y", 1)
- ui.add_child(hint)
- var bag_button := _button("Рюкзак", _inventory_menu)
- bag_button.position = Vector2(18, 181)
- ui.add_child(bag_button)
- var help_b := _button("?  Помощь", _help)
- help_b.position = Vector2(829, 487)
- ui.add_child(help_b)
- notice = _label("", 14)
- notice.position = Vector2(75, 373)
- notice.size = Vector2(810, 28)
- notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
- notice.add_theme_color_override("font_shadow_color", Color("172c2b"))
- notice.add_theme_constant_override("shadow_offset_x", 2)
- notice.add_theme_constant_override("shadow_offset_y", 2)
- ui.add_child(notice)
- overlay = ColorRect.new()
- overlay.color = Color(0.12, 0.17, 0.26, 0)
- overlay.size = Vector2(960, 540)
- overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
- ui.add_child(overlay)
- modal = PanelContainer.new()
- modal.position = Vector2(245, 86)
- modal.size = Vector2(470, 250)
- modal.add_theme_stylebox_override("panel", _panel_style("263f3d", "b1ac7b"))
- ui.add_child(modal)
- modal_body = VBoxContainer.new()
- modal_body.add_theme_constant_override("separation", 10)
- modal.add_child(modal_body)
- modal.hide()
+ hud=FarmUI.new()
+ add_child(hud)
+ hud.setup(self)
+ ui=hud
+ modal=hud.modal
+ modal_body=hud.modal_body
+ notice=hud.toast
+ _sync_hotbar()
 
 func _update_ui() -> void:
- if not is_instance_valid(stats): return
- stats.text = "%d монет  •  Силы %d  •  Ур. %d" % [coins, energy, 1 + experience / 25]
- clock_label.text = "День %02d    %02d:%02d" % [day, int(minutes) / 60, int(minutes) % 60]
- inventory_label.text = "Дерево %d · Камень %d · Семена %d · Репа %d · Доски %d · Ящики %d" % [bag.wood, bag.stone, bag.seeds, bag.turnip, bag.planks, bag.crate]
- inventory_label.clip_text = true
- var objectives := ["1. Подготовьте первую грядку [2]", "2. Посадите репу [4]", "3. Поливайте и отдыхайте дома", "4. Продайте урожай у прилавка", "5. Постройте первый склад [7]", "Усадьба оживает. Продолжайте!"]
- objective.text = objectives[clampi(quest_stage, 0, 5)]
- if quest_stage >= 5:
-  if workshop == Vector2i(-1, -1): objective.text = "6. Постройте мастерскую [7]"
-  elif progression.tool_level == 1: objective.text = "7. Доски → улучшение инструментов"
-  elif progression.crates_sold == 0: objective.text = "8. Продайте ящик урожая"
-  else: objective.text = "Усадьба процветает. Развивайтесь!"
- hint.text = TOOL_HINTS[selected]
- if selected in [4, 5]:
-  var hits := ceili(3.0 / progression.tool_level)
-  hint.text = "%s · уровень %d · %d %s · %d энергии за действие" % [TOOLS[selected], progression.tool_level, hits, "удар" if hits == 1 else "удара", maxi(1, 3 - progression.tool_level)]
- if selected == 6:
-  var cost: Dictionary = Progression.BUILDINGS[build_kind]
-  hint.text = "%s 3×2 · %d дерева · %d камня · %d монет · [7] выбор" % [cost.name, cost.wood, cost.stone, cost.coins]
- if is_instance_valid(workshop_status): workshop_status.text = _production_status()
- if styled_tool != selected:
-  styled_tool = selected
-  for i in range(tool_buttons.size()):
-   tool_buttons[i].add_theme_stylebox_override("normal", _panel_style("647451", "d7bd80") if selected == i else _panel_style("304a45", "5f7566"))
- overlay.color.a = clampf((minutes - 1050) / 600, 0, 0.35)
+ if is_instance_valid(hud): hud.refresh()
 
 func _notify(text: String) -> void:
- if is_instance_valid(notice): notice.text = text
- notification_time = 4.5
+ if is_instance_valid(notice): notice.text=text
+ if is_instance_valid(hud) and hud.modal.visible: hud.modal_notice=text
+ notification_time=4.5
 
-func _open(title: String, body: String) -> void:
- workshop_status = null
- for child in modal_body.get_children():
-  modal_body.remove_child(child)
-  child.queue_free()
- modal_body.add_child(_label(title, 21))
- var desc := _label(body, 13, "c7d1b5")
- desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
- desc.custom_minimum_size.x = 420
- modal_body.add_child(desc)
- modal.show()
- modal.reset_size()
+func _home() -> void: hud.show_home()
+func _shop() -> void: hud.show_shop()
+func _help() -> void: hud.show_help()
 
-func _close_button() -> void:
- modal_body.add_child(_button("Вернуться  [Esc]", func() -> void: modal.hide()))
+func _sync_hotbar() -> void:
+ temporary_item=""
+ var id: String=hotbar.slots[hotbar.active]
+ selected=Items.ACTIONS.find(id)
+ if id=="": selected=0
+ if is_instance_valid(hud): hud.refresh()
 
-func _home() -> void:
- _open("Дом, милый дом", "Сон восстанавливает энергию. Политые растения подрастут, а утром грядки снова потребуют воды.")
- modal_body.add_child(_button("Завершить день и сохранить", _sleep))
- _close_button()
+func _select_slot(index: int, open_catalog: bool = true) -> void:
+ if index<0 or index>=Hotbar.SIZE: return
+ hotbar.active=index
+ _sync_hotbar()
+ _save_game()
+ if selected==6 and open_catalog: _catalog()
 
-func _shop() -> void:
- _open("Прилавок долины", "Монет: %d. Репа: %d. Ящики: %d.\nСемена: 5 за 20 монет. Репа: 35, ящик урожая: 120 монет." % [coins, bag.turnip, bag.crate])
- modal_body.add_child(_button("Купить 5 семян — 20 монет", _buy_seeds))
- modal_body.add_child(_button("Продать весь урожай", _sell))
- _close_button()
-
-func _help() -> void:
- _open("Добро пожаловать в долину", "WASD / стрелки — движение.\n1–7 или колесо мыши — инструмент.\nЛКМ — действие по клетке рядом. E / пробел — перед собой.\nМотыга → семена → полив → отдых дома.\nРепа созревает за три политых дня. Собирайте рукой.\nПрилавок находится на дороге к востоку от дома.\n7 — каталог построек. Мастерская: доски, ящики, улучшения.\nЯщик урожая продаётся за 120 монет.\nF5 — сохранить, M — звук, Esc — пауза / закрыть.")
- _close_button()
+func _equip(id: String) -> void:
+ var index: int=hotbar.slots.find(id)
+ if index>=0:
+  hotbar.active=index
+  _sync_hotbar()
+ else:
+  temporary_item=id
+  selected=Items.ACTIONS.find(id)
+ if is_instance_valid(hud): hud.refresh()
 
 func _save_game() -> bool:
- var data := {"version": SAVE_VERSION, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
+ inventory_layout.reconcile(bag)
+ var data := {"version": SAVE_VERSION, "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
  for c in plots: data.plots.append([c.x, c.y, plots[c].stage, plots[c].wet])
  for c in resources: data.resources.append([c.x, c.y, resources[c].kind, resources[c].hp])
  for c in buildings: data.buildings.append([c.x, c.y])
@@ -669,11 +563,19 @@ func _load_game() -> bool:
   save_path = "user://farm_recovery.json"
   return false
  player = Vector2(data.player[0], data.player[1])
+ hotbar=Hotbar.new()
+ hotbar.restore(data.get("hotbar",hotbar.slots),data.get("active_slot",0))
+ temporary_item=""
+ selected=Items.ACTIONS.find(str(hotbar.slots[hotbar.active]))
+ if hotbar.slots[hotbar.active]=="": selected=0
  day = int(data.day)
  minutes = float(data.minutes)
  energy = int(data.energy)
  coins = int(data.coins)
  for key in bag: bag[key] = int(data.bag.get(key, 0))
+ inventory_layout=InventoryLayout.new()
+ inventory_layout.restore(data.get("inventory_layout",inventory_layout.slots))
+ inventory_layout.reconcile(bag)
  progression.restore(data.get("progression", {}))
  workshop = Vector2i(-1, -1)
  if data.get("workshop") != null: workshop = Vector2i(int(data.workshop[0]), int(data.workshop[1]))
@@ -839,6 +741,7 @@ func _self_test() -> void:
  _check(modal.visible, "help opens")
  modal.hide()
  load("res://tests/progression_test.gd").new().run(self)
+ load("res://tests/hotbar_test.gd").new().run(self)
  DirAccess.remove_absolute(save_path)
  print("ALL INTEGRATION CHECKS PASSED" if test_failures == 0 else "%d CHECKS FAILED" % test_failures)
  get_tree().quit(0 if test_failures == 0 else 1)
@@ -869,16 +772,9 @@ func _gain_xp(amount: int) -> void:
   energy = mini(100, energy + 10)
   _notify("Новый уровень хозяйства! +10 энергии")
 
-func _storage(cell: Vector2i = Vector2i(-1, -1)) -> void:
- if cell != Vector2i(-1, -1): active_storage = cell
- _open("Склад усадьбы", "Запасы под надёжной крышей.
-Дерево: %d   Камень: %d
-Семена: %d   Репа: %d
-Доски: %d   Ящики: %d" % [stored.wood, stored.stone, stored.seeds, stored.turnip, stored.planks, stored.crate])
- modal_body.add_child(_button("Оставить все запасы на складе", func() -> void: _move_storage(true)))
- modal_body.add_child(_button("Забрать все запасы", func() -> void: _move_storage(false)))
- if buildings.has(active_storage): modal_body.add_child(_button("Разобрать склад • вернуть материалы", _dismantle))
- _close_button()
+func _storage(cell: Vector2i = Vector2i(-1,-1)) -> void:
+ if cell!=Vector2i(-1,-1): active_storage=cell
+ hud.show_storage()
 
 func _move_storage(deposit: bool) -> void:
  for key in bag:
@@ -931,44 +827,9 @@ func _web_ready() -> void:
 func _web_lifecycle_save(_args: Array) -> void:
  _save_game()
 
-func _catalog() -> void:
- _open("Постройки усадьбы", "Выберите здание, затем нажмите на свободный участок рядом с персонажем. Размер: 3×2 клетки.")
- for id in Progression.BUILDINGS:
-  var kind: String = id
-  var cost: Dictionary = Progression.BUILDINGS[id]
-  var b := _button("%s · %d дерева · %d камня · %d монет" % [cost.name, cost.wood, cost.stone, cost.coins], func() -> void:
-   build_kind = kind
-   selected = 6
-   modal.hide())
-  b.disabled = id == "workshop" and workshop != Vector2i(-1, -1)
-  modal_body.add_child(b)
- _close_button()
-
-func _inventory_menu() -> void:
- _open("Рюкзак хозяина", "Монеты: %d. Инструменты: уровень %d / 3.\nЗапасы на складе нужно забрать перед использованием." % [coins, progression.tool_level])
- var names := {"wood": "Дерево", "stone": "Камень", "seeds": "Семена репы", "turnip": "Репа", "planks": "Доски", "crate": "Ящики урожая"}
- for key in bag:
-  modal_body.add_child(_label("%s: %d" % [names[key], bag[key]], 14))
- _close_button()
-
-func _workshop_menu() -> void:
- _open("Мастерская", "Производство идёт во время игры и сна. В меню время остановлено. Очередь: не более 3 заказов.")
- workshop_status = _label(_production_status(), 12, "d8c58e")
- modal_body.add_child(workshop_status)
- var boards := _button("2 доски · 4 дерева · 30 игровых минут", func() -> void: _start_recipe("planks"))
- boards.disabled = progression.jobs.size() >= Progression.MAX_QUEUE or bag.wood < 4
- modal_body.add_child(boards)
- var crates := _button("Ящик урожая · 2 доски + 1 репа · 60 минут", func() -> void: _start_recipe("crate"))
- crates.disabled = progression.jobs.size() >= Progression.MAX_QUEUE or bag.planks < 2 or bag.turnip < 1
- modal_body.add_child(crates)
- var collect_button := _button("Забрать готовую продукцию", _collect_products)
- collect_button.disabled = not progression.has_products()
- modal_body.add_child(collect_button)
- modal_body.add_child(_button("Улучшение инструментов · уровень %d / 3" % progression.tool_level, _upgrade_menu))
- var remove := _button("Разобрать мастерскую · вернуть материалы", _dismantle_workshop)
- remove.disabled = not progression.jobs.is_empty() or progression.has_products()
- modal_body.add_child(remove)
- _close_button()
+func _catalog() -> void: hud.show_catalog()
+func _inventory_menu() -> void: hud.show_inventory()
+func _workshop_menu() -> void: hud.show_workshop()
 
 func _production_status() -> String:
  var status := "Очередь пуста"
@@ -1000,17 +861,7 @@ func _collect_products() -> void:
   _notify("Продукция добавлена в рюкзак")
  _workshop_menu()
 
-func _upgrade_menu() -> void:
- if progression.tool_level >= 3:
-  _open("Инструменты мастера", "Достигнут максимальный уровень. Деревья и камни добываются за один удар. Работа стоит 1 энергию.")
- else:
-  var cost: Dictionary = Progression.UPGRADES[progression.tool_level + 1]
-  _open("Надёжные инструменты", "Уровень %d → %d. Цена: %d монет, %d досок, %d камня.\nТопор и кирка наносят больше урона, работа требует меньше энергии.\nСейчас: %d монет, %d досок, %d камня." % [progression.tool_level, progression.tool_level + 1, cost.coins, cost.planks, cost.stone, coins, bag.planks, bag.stone])
-  var buy := _button("Улучшить инструменты", _upgrade_tools)
-  buy.disabled = not progression.can_upgrade(bag, coins)
-  modal_body.add_child(buy)
- modal_body.add_child(_button("К производству", _workshop_menu))
- _close_button()
+func _upgrade_menu() -> void: hud.show_upgrade()
 
 func _upgrade_tools() -> bool:
  if workshop == Vector2i(-1, -1) or not progression.can_upgrade(bag, coins):

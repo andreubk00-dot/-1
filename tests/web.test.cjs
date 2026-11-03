@@ -85,6 +85,10 @@ async function act(page, tool, cell) {
     check(await yp.evaluate(() => sdkEvents.at(-1) === 'start'), 'gameplay resumes after menu');
     await yp.evaluate(() => sdkHandlers.game_api_pause()); await delay(250);
     check(await yp.evaluate(() => ValleyPlatform.paused && sdkEvents.at(-1) === 'stop'), 'SDK pause stops game and gameplay tracking');
+    await yp.mouse.click(1219,305);await delay(180);
+    check(!await yp.locator('#touch').evaluate(e=>e.hidden), 'SDK pause blocks HUD window buttons');
+    await yp.dispatchEvent('#action','pointerdown');
+    check(await yp.evaluate(()=>ValleyPlatform.takeAction()===false), 'SDK pause cannot queue a virtual action for later');
     state = await act(yp, 2, [19,15]);
     check(state.plots.length === 0, 'SDK pause blocks gameplay input');
     await yp.evaluate(() => sdkHandlers.game_api_resume()); await delay(200);
@@ -106,7 +110,7 @@ async function act(page, tool, cell) {
     state = await save(mp);
     check(state.player[0] > oldX + 8, 'real touch moves the player');
     check(await mp.evaluate(() => ValleyPlatform.x === 0 && ValleyPlatform.y === 0), 'touch release clears movement');
-    await mp.touchscreen.tap(300, 470);
+    await mp.touchscreen.tap(249, 490);
     await delay(250);
     const action = await mp.locator('#action').boundingBox();
     await mp.touchscreen.tap(action.x + 25, action.y + 25);

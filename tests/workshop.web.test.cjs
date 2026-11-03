@@ -31,48 +31,48 @@ function check(value,message){assert.ok(value,message);console.log('PASS:',messa
   let saved=await state();
   check(saved.bag.planks===0&&saved.progression.tool_level===1,'legacy browser save gains production defaults');
   await page.keyboard.press('7');await delay(150);
-  await click(640,325); // Workshop in construction catalog.
+  await click(640,402); // Workshop in construction catalog.
   await click(664,432); // Cell (19,15), clear ground next to player.
   saved=await state();
   check(saved.workshop[0]===19&&saved.workshop[1]===15&&saved.coins===440&&saved.bag.wood===60&&saved.bag.stone===80,'catalog places workshop and charges exact construction cost');
   await click(664,432);
-  await click(640,319);await click(640,319); // Two boards orders.
+  await click(400,400);await click(400,400); // Two boards orders.
   saved=await state();
   check(saved.progression.jobs.length===2&&saved.bag.wood===52,'recipe buttons enqueue and charge materials');
   await delay(500);
   check((await state()).progression.jobs[0].remaining===30,'production menu pauses work');
-  await page.keyboard.press('Escape');await delay(650);await page.keyboard.press('F5');await delay(150);
+  await page.keyboard.press('Escape');await delay(180);await delay(650);await page.keyboard.press('F5');await delay(150);
   check((await state()).progression.jobs[0].remaining<30,'queued production advances in active gameplay');
   await relocate([252,252]);
   check((await state()).progression.jobs.length===2,'queued production survives browser reload');
-  await click(504,312);await click(640,263); // Home -> sleep.
+  await click(504,312);await click(640,278); // Home -> sleep.
   saved=await state();
   check(saved.day===2&&saved.progression.jobs.length===0&&saved.progression.products.planks===4,'sleep completes queued production through real home dialog');
   await relocate([456,336]);await click(664,432);
   await page.screenshot({path:'tests/workshop-v2.png'});
-  await click(640,442); // Collect.
+  await click(640,478); // Collect.
   saved=await state();
   check(saved.bag.planks===4&&saved.progression.products.planks===0,'collection transfers workshop products exactly once');
-  await click(640,503); // Tool upgrade menu.
+  await click(415,181); // Tool upgrade menu.
   await page.screenshot({path:'tests/upgrade-v2.png'});
-  await click(640,305); // Confirm upgrade.
+  await click(640,366); // Confirm upgrade.
   saved=await state();
   check(saved.progression.tool_level===2&&saved.coins===340&&saved.bag.planks===0&&saved.bag.stone===75,'tool upgrade applies and charges exact ingredients');
-  await page.keyboard.press('Escape');await click(664,432);
-  await click(640,319);await page.keyboard.press('Escape');
-  await relocate([252,252]);await click(504,312);await click(640,263);
-  await relocate([456,336]);await click(664,432);await click(640,442);
+  await page.keyboard.press('Escape');await delay(180);await click(664,432);
+  await click(400,400);await page.keyboard.press('Escape');await delay(180);
+  await relocate([252,252]);await click(504,312);await click(640,278);
+  await relocate([456,336]);await click(664,432);await click(640,478);
   check((await state()).bag.planks===2,'production remains usable after upgrade');
-  await click(640,380); // Crate recipe.
+  await click(880,400); // Crate recipe.
   saved=await state();
   check(saved.bag.planks===0&&saved.bag.turnip===2&&saved.progression.jobs[0].recipe==='crate','crate recipe consumes boards and produce');
-  await page.keyboard.press('Escape');await relocate([252,252]);await click(504,312);await click(640,263);
-  await relocate([456,336]);await click(664,432);await click(640,442);
+  await page.keyboard.press('Escape');await delay(180);await relocate([252,252]);await click(504,312);await click(640,278);
+  await relocate([456,336]);await click(664,432);await click(640,478);
   check((await state()).bag.crate===1,'finished crate can be collected');
-  await page.keyboard.press('Escape');await relocate([684,276]);
+  await page.keyboard.press('Escape');await delay(180);await relocate([684,276]);
   await click(640,312); // Shop cell (28,10), directly in front of saved player.
   await page.screenshot({path:'tests/shop-v2.png'});
-  await click(640,325); // Sell all produce.
+  await click(640,402); // Sell all produce.
   saved=await state();
   check(saved.bag.crate===0&&saved.bag.turnip===0&&saved.coins===530&&saved.progression.crates_sold===1,'shop sells two turnips and one crafted crate');
   check(errors.length===0,'no browser runtime errors: '+errors.join('\n'));

@@ -22,6 +22,7 @@
   }
   function clearInput() { touches.clear(); actions = 0; }
   const platform = {
+    setModal(open) { document.getElementById("touch").hidden = Boolean(open); if (open) clearInput(); },
     setSaveCallback(callback) { saveCallback = callback; },
     get paused() { return !started || hidden || blurred || adPaused; },
     get x() { return Math.max(-1, Math.min(1, [...touches.values()].reduce((s, v) => s + v[0], 0))); },
@@ -81,12 +82,14 @@
   window.addEventListener('pagehide', () => { hidden = true; clearInput(); saveNow(); refresh(); });
   window.addEventListener('pageshow', () => { hidden = document.hidden; refresh(); });
   window.addEventListener('keydown', event => {
-    if (started && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F5'].includes(event.code)) event.preventDefault();
+    if (started && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F5', 'Tab'].includes(event.code)) event.preventDefault();
   });
   document.addEventListener('contextmenu', event => event.preventDefault());
   document.querySelectorAll('[data-move]').forEach(button => {
     button.addEventListener('pointerdown', event => {
-      event.preventDefault(); button.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      if (platform.paused) return;
+      button.setPointerCapture(event.pointerId);
       touches.set(event.pointerId, button.dataset.move.split(',').map(Number));
     });
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
@@ -94,7 +97,7 @@
     }
   });
   document.getElementById('action').addEventListener('pointerdown', event => {
-    event.preventDefault(); actions++;
+    event.preventDefault(); if (!platform.paused) actions++;
   });
   document.getElementById('play').addEventListener('click', () => platform.start());
 })();
