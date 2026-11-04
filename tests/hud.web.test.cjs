@@ -34,9 +34,9 @@ function check(value,message){assert.ok(value,message);console.log('PASS:',messa
   check(s.hotbar[1]==='axe'&&s.hotbar[8]==='hoe','drag between hotbar cells swaps contents');
   await p.mouse.click(slot(1).x,slot(1).y,{button:'right'});await delay(160);
   s=await read();check(s.hotbar[1]==='','right click clears a hotbar slot');
-  await click(277,300);await click(slot(1).x,slot(1).y);
+  await click(195,300);await click(slot(1).x,slot(1).y);
   s=await read();check(s.hotbar[1]==='seeds'&&s.bag.seeds===8,'click assignment copies item reference, not inventory quantity');
-  await drag({x:195,y:300},{x:608,y:460});
+  await drag({x:608,y:220},{x:608,y:460});
   s=await read();check(s.inventory_layout[23]==='wood'&&s.bag.wood===5,'inventory stacks move to free cells without changing quantity');
   await drag({x:608,y:460},slot(7));
   await p.keyboard.press('Escape');await delay(200);
@@ -60,7 +60,7 @@ function check(value,message){assert.ok(value,message);console.log('PASS:',messa
   await m.touchscreen.tap(914,168);await delay(250);
   check(!await m.locator('#touch').isVisible(),'mobile movement buttons hide while a full window is open');
   await m.screenshot({path:'tests/inventory-mobile-v3.png'});
-  await m.touchscreen.tap(146,225);await delay(100);await m.touchscreen.tap(769,490);await delay(200);
+  await m.touchscreen.tap(456,165);await delay(100);await m.touchscreen.tap(769,490);await delay(200);
   let ms=await m.evaluate(k=>JSON.parse(localStorage.getItem(k)),key);
   check(ms.hotbar[9]==='seeds'&&ms.bag.seeds===8,'touch assigns selected inventory item to any hotbar slot');
   await m.touchscreen.tap(824,70);await delay(200);

@@ -6,11 +6,12 @@ const InventoryLayout = preload("res://game/inventory_layout.gd")
 const Hotbar = preload("res://game/hotbar.gd")
 const FarmUI = preload("res://game/ui/farm_ui.gd")
 const Effects = preload("res://game/work_effects.gd")
+const Crops = preload("res://game/crops.gd")
+const Orders = preload("res://game/orders.gd")
+const Landscape = preload("res://game/landscape.gd")
 const TILE := 24
 const WORLD := Vector2i(48, 36)
-const SAVE_VERSION := 1
-const TOOLS := ["Рука", "Мотыга", "Лейка", "Семена", "Топор", "Кирка", "Строить"]
-const TOOL_HINTS := ["Собрать урожай • открыть прилавок или дом", "Подготовить землю под посадку", "Полить грядку — один раз в день", "Посадить репу • созревает за 3 полива", "Срубить дерево • 3 удара", "Разбить камень • 3 удара", "Построить склад 3×2 • 20 дерева, 10 камня"]
+const SAVE_VERSION := 2
 const HOUSE := Rect2i(8, 6, 5, 4)
 const SHOP := Rect2i(27, 9, 3, 2)
 var player := Vector2(19 * TILE, 14 * TILE)
@@ -19,6 +20,8 @@ var direction := 0
 var walk_clock := 0.0
 var moving := false
 var selected := 0
+var building_mode := false
+var orders = Orders.new()
 var hotbar = Hotbar.new()
 var inventory_layout = InventoryLayout.new()
 var hud: CanvasLayer
@@ -28,7 +31,7 @@ var day := 1
 var minutes := 360.0
 var energy := 100
 var coins := 80
-var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0}
+var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0}
 var water: Dictionary = {}
 var resources: Dictionary = {}
 var plots: Dictionary = {}
@@ -48,7 +51,7 @@ var elapsed := 0.0
 var quest_stage := 0
 var experience := 0
 var active_storage := Vector2i(-1, -1)
-var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0}
+var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0}
 var progression = Progression.new()
 var workshop := Vector2i(-1, -1)
 var build_kind := "warehouse"
@@ -72,7 +75,7 @@ func _ready() -> void:
  test_mode = "--self-test" in OS.get_cmdline_user_args()
  if test_mode: save_path = "user://test_farm.json"
  font = load("res://art/ui.ttf")
- for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop"]:
+ for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop", "crops"]:
   textures[key] = load("res://art/" + key + ".png")
  for cell in JSON.parse_string(FileAccess.get_file_as_string("res://game/water.json")):
   water[Vector2i(int(cell[0]), int(cell[1]))] = true
@@ -204,6 +207,10 @@ func _input(event: InputEvent) -> void:
  if web_platform!=null and bool(web_platform.paused):
   get_viewport().set_input_as_handled()
   return
+ if event is InputEventMouseButton and event.pressed and event.button_index==MOUSE_BUTTON_RIGHT and building_mode:
+  _cancel_build()
+  get_viewport().set_input_as_handled()
+  return
  if event is InputEventKey and event.pressed and not event.echo:
   if event.physical_keycode==KEY_I or event.keycode==KEY_TAB:
    if modal.visible and hud.view=="inventory": modal.hide()
@@ -215,11 +222,12 @@ func _unhandled_input(event: InputEvent) -> void:
  if event is InputEventKey and event.pressed and not event.echo:
   if event.keycode == KEY_ESCAPE:
    if modal.visible: modal.hide()
-   elif selected==6: _equip("hand")
+   elif building_mode: _cancel_build()
    else: _help()
    get_viewport().set_input_as_handled()
    return
   if event.physical_keycode==KEY_B: _catalog(); return
+  if event.physical_keycode==KEY_J: _orders_menu(); return
   if event.keycode==KEY_F5:
    if _save_game(): _notify("Хозяйство сохранено")
    return
@@ -242,11 +250,12 @@ func _unhandled_input(event: InputEvent) -> void:
   elif event.button_index==MOUSE_BUTTON_WHEEL_DOWN: _select_slot((hotbar.active+1)%10,false)
 
 func _act(c: Vector2i) -> bool:
+ var was_building:=building_mode
  var previous_kind := ""
  if resources.has(c): previous_kind=resources[c].kind
  var success := _perform_action(c)
- if success and not modal.visible and selected>=0 and selected<=5:
-  effects.start(selected,player,c,previous_kind if not resources.has(c) else "")
+ if success and not modal.visible and not was_building and selected>=0 and selected<=6:
+  effects.start(3 if selected==6 else selected,player,c,previous_kind if not resources.has(c) else "", "carrot_seeds" if selected==6 else "seeds")
   action_cooldown=maxf(action_cooldown,effects.duration)
   var delta_direction:=Vector2(c*TILE+Vector2i(12,12))-player
   if delta_direction.length_squared()>0: facing=delta_direction.normalized()
@@ -270,18 +279,22 @@ func _perform_action(c: Vector2i) -> bool:
   _workshop_menu(); return true
  if not _in_world(c) or water.has(c):
   _notify("Здесь нельзя работать"); return false
+ if building_mode: return _build(c)
  if selected<0:
   _notify("Этот предмет используется в строительстве или мастерской"); return false
  if selected == 0:
-  if plots.has(c) and plots[c].stage >= 3:
-   bag.turnip += 1
-   _gain_xp(5)
-   plots[c] = {"stage": -1, "wet": false}
+  if plots.has(c) and plots[c].stage >= int(Crops.spec(plots[c]).days):
+   var crop: String=plots[c].get("crop","turnip")
+   bag[crop]+=1
+   _gain_xp(int(Crops.SPECS[crop].xp))
+   plots[c] = {"stage": -1, "wet": false, "crop":""}
    quest_stage = maxi(quest_stage, 3)
-   _notify("Репа собрана! Продайте её у прилавка.")
+   _notify(Crops.SPECS[crop].name+" собрана! Урожай можно продать или сдать в заказ.")
    return true
-  _notify("Выберите инструмент внизу или клавишами 1–7"); return false
- if selected == 6: return _build(c)
+  if plots.has(c) and plots[c].stage>=0:
+   var spec: Dictionary=Crops.spec(plots[c])
+   _notify("%s: %d / %d политых дней"%[spec.name,plots[c].stage,spec.days]); return false
+  _notify("Выберите инструмент в хотбаре или откройте инвентарь [I]"); return false
  var energy_cost := maxi(1, 3 - progression.tool_level)
  if energy < energy_cost:
   _notify("Нужен отдых. Вернитесь в дом и завершите день."); _play("error"); return false
@@ -302,22 +315,25 @@ func _perform_action(c: Vector2i) -> bool:
  if _solid(c): _notify("Это место занято"); return false
  if selected == 1:
   if plots.has(c): _notify("Грядка уже подготовлена"); return false
-  if c.y in [12, 13] or c.x in [22, 23]: _notify("Оставим дорожки свободными"); return false
+  if Landscape.is_path(c): _notify("Оставим дорожки свободными"); return false
   plots[c] = {"stage": -1, "wet": false}
   energy -= energy_cost
   quest_stage = maxi(quest_stage, 1)
  elif selected == 2:
   if not plots.has(c): _notify("Сначала подготовьте грядку мотыгой"); return false
+  if plots[c].stage>=int(Crops.spec(plots[c]).days): _notify("Урожай готов — соберите свободной рукой"); return false
   if plots[c].wet: _notify("Сегодня уже полито"); return false
   plots[c].wet = true
   energy -= energy_cost
 
- elif selected == 3:
+ elif selected in [3,6]:
   if not plots.has(c): _notify("Сначала подготовьте землю мотыгой"); return false
   if plots[c].stage != -1: _notify("На грядке уже что-то растёт"); return false
-  if bag.seeds <= 0: _notify("Купите семена у прилавка"); return false
+  var seed_id: String="carrot_seeds" if selected==6 else "seeds"
+  if bag[seed_id]<=0: _notify("Купите семена у прилавка"); return false
   plots[c].stage = 0
-  bag.seeds -= 1
+  plots[c].crop=Crops.from_seed(seed_id)
+  bag[seed_id]-=1
   energy -= energy_cost
   quest_stage = maxi(quest_stage, 2)
  else: return false
@@ -328,7 +344,7 @@ func _build_valid(c: Vector2i) -> bool:
  for y in range(c.y, c.y + 2):
   for x in range(c.x, c.x + 3):
    var p := Vector2i(x, y)
-   if _solid(p) or plots.has(p) or p.y in [12, 13] or p.x in [22, 23]: return false
+   if _solid(p) or plots.has(p) or Landscape.is_path(p): return false
  return not area.has_point(_cell(player))
 
 func _build(c: Vector2i) -> bool:
@@ -348,6 +364,7 @@ func _build(c: Vector2i) -> bool:
   quest_stage = maxi(quest_stage, 5)
  _play("build")
  _notify(cost.name + " готова!" if build_kind == "workshop" else "Склад построен!")
+ building_mode=false
  _save_game()
  return true
 
@@ -357,15 +374,16 @@ func _sleep() -> void:
  minutes = 360
  energy = 100
  for c in plots:
-  if plots[c].wet and plots[c].stage >= 0: plots[c].stage = mini(3, plots[c].stage + 1)
+  if plots[c].wet and plots[c].stage >= 0: plots[c].stage = mini(int(Crops.spec(plots[c]).days), plots[c].stage + 1)
   plots[c].wet = false
  modal.hide()
  _save_game()
  _notify("День %d. Новый рассвет — новые возможности." % day)
 
 func _sell() -> void:
- if bag.turnip <= 0 and bag.crate <= 0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
- var earned: int = bag.turnip * 35 + bag.crate * 120
+ if bag.turnip <= 0 and bag.carrot<=0 and bag.crate <= 0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
+ var earned: int = bag.turnip * 35 + bag.carrot*55 + bag.crate * 120
+ bag.carrot=0
  progression.crates_sold += bag.crate
  bag.crate = 0
  coins += earned
@@ -376,10 +394,13 @@ func _sell() -> void:
  _save_game()
  _shop()
 
-func _buy_seeds() -> void:
- if coins < 20: _notify("Нужно 20 монет"); return
- coins -= 20
- bag.seeds += 5
+func _buy_seeds(seed_id: String="seeds") -> void:
+ var crop: String=Crops.from_seed(seed_id)
+ if crop=="": return
+ var price: int=Crops.SPECS[crop].pack
+ if coins<price: _notify("Не хватает монет"); return
+ coins-=price
+ bag[seed_id]+=5
  _play("pick")
  _save_game()
  _shop()
@@ -402,17 +423,9 @@ func _draw() -> void:
   draw_style_box(_world_style(soil), Rect2(p + Vector2(1, 1), Vector2(22, 22)))
   for y in [6, 12, 18]: draw_line(p + Vector2(4, y), p + Vector2(20, y), soil.lightened(0.12))
   var stage: int = plots[c].stage
-  if stage >= 0:
-   for offset in [Vector2(7, 8), Vector2(16, 15)]:
-    var at: Vector2 = p + offset
-    if stage == 3:
-     draw_circle(at + Vector2(0, 1), 4, Color("e6cab3"))
-     draw_rect(Rect2(at + Vector2(-2, -5), Vector2(3, 5)), Color("649055"))
-    else:
-     var h := 3 + stage * 2
-     draw_line(at, at + Vector2(0, -h), Color("3d6c45"), 2)
-     draw_rect(Rect2(at + Vector2(-4, -h), Vector2(4, 3)), Color("96b85e"))
-     draw_rect(Rect2(at + Vector2(1, -h + 2), Vector2(4, 3)), Color("73a357"))
+  if stage>=0:
+   var row: int=Crops.spec(plots[c]).row
+   draw_texture_rect_region(textures.crops,Rect2(p,Vector2(24,24)),Rect2(clampi(stage,0,4)*24,row*24,24,24))
  # Pond sparkles have no collision and use the same pixel scale as the shore.
  for c in water:
   if (c.x * 7 + c.y * 3) % 11 == 0:
@@ -453,13 +466,17 @@ func _draw() -> void:
     var frame := int(walk_clock) % 4 if moving else 0
     draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28)+effects.body_offset(), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32))
     effects.draw_tool(self,player.round())
+ Landscape.draw_ambient(self,elapsed,minutes)
  if not modal.visible:
   var target := hovered
   var near := Vector2(target * TILE + Vector2i(12, 12)).distance_to(player) <= TILE * 2.25
-  if _in_world(target) and near:
-   var size := Vector2(72, 48) if selected == 6 else Vector2(24, 24)
-   var valid := _build_valid(target) if selected == 6 else not water.has(target)
+  if _in_world(target) and (near or building_mode):
+   var size := Vector2(72, 48) if building_mode else Vector2(24, 24)
+   var valid := _build_valid(target) and near and _can_afford_build() if building_mode else not water.has(target)
    var color := Color(0.9, 0.87, 0.66, 0.8) if valid else Color(0.88, 0.42, 0.36, 0.8)
+   if building_mode:
+    var texture: Texture2D=textures.workshop if build_kind=="workshop" else textures.shed
+    draw_texture(texture,Vector2(target*TILE)+Vector2(0,-32 if build_kind=="workshop" else -24),Color(color,0.55))
    draw_rect(Rect2(Vector2(target * TILE), size), Color(color, 0.12), true)
    draw_rect(Rect2(Vector2(target * TILE) + Vector2.ONE, size - Vector2(2, 2)), color, false, 1)
  for part in particles: draw_rect(Rect2(part.pos.round(), Vector2(2, 2)), part.color)
@@ -507,6 +524,7 @@ func _shop() -> void: hud.show_shop()
 func _help() -> void: hud.show_help()
 
 func _sync_hotbar() -> void:
+ building_mode=false
  temporary_item=""
  var id: String=hotbar.slots[hotbar.active]
  selected=Items.ACTIONS.find(id)
@@ -518,9 +536,10 @@ func _select_slot(index: int, open_catalog: bool = true) -> void:
  hotbar.active=index
  _sync_hotbar()
  _save_game()
- if selected==6 and open_catalog: _catalog()
+
 
 func _equip(id: String) -> void:
+ if not Items.NAMES.has(id): return
  var index: int=hotbar.slots.find(id)
  if index>=0:
   hotbar.active=index
@@ -532,8 +551,8 @@ func _equip(id: String) -> void:
 
 func _save_game() -> bool:
  inventory_layout.reconcile(bag)
- var data := {"version": SAVE_VERSION, "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
- for c in plots: data.plots.append([c.x, c.y, plots[c].stage, plots[c].wet])
+ var data := {"version": SAVE_VERSION, "orders":orders.state(), "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
+ for c in plots: data.plots.append([c.x, c.y, plots[c].stage, plots[c].wet, plots[c].get("crop","turnip")])
  for c in resources: data.resources.append([c.x, c.y, resources[c].kind, resources[c].hp])
  for c in buildings: data.buildings.append([c.x, c.y])
  if web_platform != null:
@@ -566,6 +585,7 @@ func _load_game() -> bool:
  hotbar=Hotbar.new()
  hotbar.restore(data.get("hotbar",hotbar.slots),data.get("active_slot",0))
  temporary_item=""
+ building_mode=false
  selected=Items.ACTIONS.find(str(hotbar.slots[hotbar.active]))
  if hotbar.slots[hotbar.active]=="": selected=0
  day = int(data.day)
@@ -576,6 +596,7 @@ func _load_game() -> bool:
  inventory_layout=InventoryLayout.new()
  inventory_layout.restore(data.get("inventory_layout",inventory_layout.slots))
  inventory_layout.reconcile(bag)
+ orders.restore(data.get("orders",{}))
  progression.restore(data.get("progression", {}))
  workshop = Vector2i(-1, -1)
  if data.get("workshop") != null: workshop = Vector2i(int(data.workshop[0]), int(data.workshop[1]))
@@ -583,7 +604,7 @@ func _load_game() -> bool:
  experience = int(data.get("experience", 0))
  for key in stored: stored[key] = int(data.get("stored", {}).get(key, 0))
  plots.clear()
- for row in data.plots: plots[Vector2i(int(row[0]), int(row[1]))] = {"stage": int(row[2]), "wet": row[3]}
+ for row in data.plots: plots[Vector2i(int(row[0]), int(row[1]))] = {"stage": int(row[2]), "wet": row[3], "crop":row[4] if row.size()>4 else "turnip"}
  resources.clear()
  for row in data.resources: resources[Vector2i(int(row[0]), int(row[1]))] = {"kind": row[2], "hp": int(row[3])}
  buildings.clear()
@@ -595,7 +616,8 @@ func _valid_save(data: Variant) -> bool:
  if not data is Dictionary: return false
  for key in ["version", "player", "day", "minutes", "energy", "coins", "bag", "quest", "plots", "resources", "buildings"]:
   if not data.has(key): return false
- if data.version != SAVE_VERSION or not data.bag is Dictionary: return false
+ if (data.version!=1 and data.version!=SAVE_VERSION) or not data.bag is Dictionary: return false
+ if not orders.valid(data.get("orders",{})): return false
  if not progression.valid_state(data.get("progression", {})): return false
  if not _valid_workshop(data): return false
  if data.has("experience") and (not _number(data.experience) or data.experience < 0 or data.experience > 10000000): return false
@@ -603,16 +625,17 @@ func _valid_save(data: Variant) -> bool:
   if not data.stored is Dictionary: return false
   for key in stored:
    if not data.stored.has(key):
-    if key in ["planks", "crate"]: continue
+    if key in ["planks", "crate", "carrot_seeds", "carrot"]: continue
     return false
    if not _number(data.stored[key]) or data.stored[key] < 0 or data.stored[key] > 10000000: return false
  for key in bag:
   if not data.bag.has(key):
-   if key in ["planks", "crate"]: continue
+   if key in ["planks", "crate", "carrot_seeds", "carrot"]: continue
    return false
   if not _number(data.bag[key]) or data.bag[key] < 0 or data.bag[key] > 10000000: return false
  for key in ["day", "minutes", "energy", "coins", "quest"]:
   if not _number(data[key]): return false
+ if data.get("orders",{}).get("last_day",0)>data.day: return false
  if data.day < 1 or data.minutes < 360 or data.minutes >= 1320 or data.energy < 0 or data.energy > 100 or data.coins < 0: return false
  if not data.player is Array or data.player.size() != 2: return false
  for n in data.player:
@@ -621,13 +644,20 @@ func _valid_save(data: Variant) -> bool:
   if not data[key] is Array or data[key].size() > WORLD.x * WORLD.y: return false
   var seen := {}
   for row in data[key]:
-   if not row is Array or row.size() != (2 if key == "buildings" else 4): return false
+   if not row is Array: return false
+   if key=="plots":
+    if row.size() not in [4,5]: return false
+   elif row.size() != (2 if key=="buildings" else 4): return false
    if not _number(row[0]) or not _number(row[1]): return false
    var c := Vector2i(int(row[0]), int(row[1]))
    if not _in_world(c) or water.has(c) or seen.has(c): return false
    seen[c] = true
    if key == "plots":
-    if not _number(row[2]) or row[2] < -1 or row[2] > 3 or not row[3] is bool: return false
+    if not _number(row[2]) or row[2]!=floorf(row[2]) or row[2]<-1 or not row[3] is bool: return false
+    var crop: Variant=row[4] if row.size()==5 else "turnip"
+    if not crop is String: return false
+    if row[2]>=0 and not Crops.SPECS.has(crop): return false
+    if row[2]>int(Crops.SPECS.get(crop,Crops.SPECS.turnip).days): return false
    if key == "resources":
     if row[2] not in ["tree", "rock"] or not _number(row[3]) or row[3] < 1 or row[3] > 3: return false
  return true
@@ -694,10 +724,10 @@ func _self_test() -> void:
  energy = 100
  player = Vector2(19.5 * TILE, 18.5 * TILE)
  var b := Vector2i(19, 19)
- _check(not _test_action(b, 6), "insufficient construction materials rejected")
+ _check(not _test_build(b), "insufficient construction materials rejected")
  bag.wood = 20
  bag.stone = 10
- _check(_test_action(b, 6), "building placed with sufficient materials")
+ _check(_test_build(b), "building placed with sufficient materials")
  _check(bag.wood == 0 and bag.stone == 0 and buildings.size() == 1, "building cost charged once")
  _check(_solid(b) and not _build_valid(b), "building blocks movement and overlapping construction")
  _check(not _build_valid(Vector2i(22, 17)), "roads protected from construction")
@@ -742,6 +772,7 @@ func _self_test() -> void:
  modal.hide()
  load("res://tests/progression_test.gd").new().run(self)
  load("res://tests/hotbar_test.gd").new().run(self)
+ load("res://tests/expansion_test.gd").new().run(self)
  DirAccess.remove_absolute(save_path)
  print("ALL INTEGRATION CHECKS PASSED" if test_failures == 0 else "%d CHECKS FAILED" % test_failures)
  get_tree().quit(0 if test_failures == 0 else 1)
@@ -766,11 +797,13 @@ func _capture() -> void:
  get_tree().quit()
 
 func _gain_xp(amount: int) -> void:
- var old_level := 1 + experience / 25
- experience += amount
- if 1 + experience / 25 > old_level:
-  energy = mini(100, energy + 10)
-  _notify("Новый уровень хозяйства! +10 энергии")
+ var old_level: int=experience/25
+ experience+=amount
+ var gained: int=experience/25-old_level
+ if gained>0:
+  var restored:=mini(100-energy,gained*10)
+  energy=mini(100,energy+gained*10)
+  _notify("Уровень хозяйства %d!"%(1+experience/25)+(" +%d энергии"%restored if restored>0 else ""))
 
 func _storage(cell: Vector2i = Vector2i(-1,-1)) -> void:
  if cell!=Vector2i(-1,-1): active_storage=cell
@@ -900,7 +933,7 @@ func _valid_workshop(data: Dictionary) -> bool:
  for y in range(origin.y, origin.y + 2):
   for x in range(origin.x, origin.x + 3):
    var c := Vector2i(x, y)
-   if not _in_world(c) or water.has(c) or HOUSE.has_point(c) or SHOP.has_point(c) or c.x in [22, 23] or c.y in [12, 13]: return false
+   if not _in_world(c) or water.has(c) or HOUSE.has_point(c) or SHOP.has_point(c): return false
  for key in ["resources", "plots", "buildings"]:
   if not data[key] is Array: return false
   for row in data[key]:
@@ -909,4 +942,45 @@ func _valid_workshop(data: Dictionary) -> bool:
    if key == "buildings":
     if Rect2i(cell, Vector2i(3, 2)).intersects(area): return false
    elif area.has_point(cell): return false
+ return true
+
+func _begin_build(kind: String) -> void:
+ if not Progression.BUILDINGS.has(kind): return
+ build_kind=kind
+ building_mode=true
+ temporary_item=""
+ modal.hide()
+ hud.refresh()
+
+func _cancel_build() -> void:
+ building_mode=false
+ queued_action=null
+ hud.refresh()
+
+func _can_afford_build() -> bool:
+ var cost: Dictionary=Progression.BUILDINGS[build_kind]
+ return bag.wood>=cost.wood and bag.stone>=cost.stone and coins>=cost.coins
+
+func _test_build(c: Vector2i) -> bool:
+ building_mode=true
+ action_cooldown=0
+ var result:=_act(c)
+ building_mode=false
+ return result
+
+func _orders_menu() -> void: hud.show_orders()
+
+func _can_deliver() -> bool:
+ return player.distance_to(Vector2(SHOP.position*TILE)+Vector2(36,48))<=TILE*3
+
+func _submit_order() -> bool:
+ if not _can_deliver(): _notify("Сдайте заказ у прилавка долины"); return false
+ var reward: Dictionary=orders.submit(bag,day)
+ if reward.is_empty(): _notify("Не хватает продукции или заказ на сегодня уже сдан"); return false
+ coins+=int(reward.coins)
+ _gain_xp(int(reward.xp))
+ _play("pick")
+ _save_game()
+ _orders_menu()
+ _notify("Заказ выполнен! +%d монет и +%d опыта"%[reward.coins,reward.xp])
  return true

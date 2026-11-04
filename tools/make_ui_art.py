@@ -1,15 +1,21 @@
 """Original hand-authored pixel icons. All geometry is snapped to a 32px grid."""
 from PIL import Image,ImageDraw
 from pathlib import Path
-names=['hand','hoe','water','seeds','axe','pick','build','wood','stone','turnip','planks','crate','bag','coin','energy','sun','moon','leaf','house','warehouse','workshop','clock','star','book','close','sort','arrow','check','hammer','spark','empty','settings']
-atlas=Image.new('RGBA',(256,128))
+names=['hand','hoe','water','seeds','axe','pick','build','wood','stone','turnip','planks','crate','bag','coin','energy','sun','moon','leaf','house','warehouse','workshop','clock','star','book','close','sort','arrow','check','hammer','spark','empty','settings','carrot','carrot_seeds','orders']
+atlas=Image.new('RGBA',(256,160))
 for i,name in enumerate(names):
  im=Image.new('RGBA',(32,32));d=ImageDraw.Draw(im)
  dark='#273a3b';gold='#e8be73';light='#f6dca1';wood='#a76d47';steel='#91bfc0'
  def rect(box,c,outline=None):d.rectangle(box,fill=c,outline=outline)
  def line(points,c,w=2):d.line(points,fill=c,width=w)
  def poly(points,c):d.polygon(points,fill=c,outline=dark)
- if name in ['hoe','axe','pick','hammer']:
+ if name=='carrot':
+  poly([(8,13),(24,10),(14,29)],'#dd8d4d');line([(10,16),(17,18)],'#f4bb6e');line([(12,22),(16,23)],'#ad6d42');line([(16,12),(14,3)],'#558b51',3);line([(17,11),(23,4)],'#82a75b',3);line([(15,11),(8,5)],'#6f9b58',3)
+ elif name=='carrot_seeds':
+  poly([(7,5),(24,5),(25,27),(6,27)],'#c89b64');rect((8,10,23,23),'#f1d99d');rect((7,6,24,9),'#8c6947');poly([(11,15),(20,13),(14,22)],'#df9454');line([(16,14),(14,10)],'#668e4e')
+ elif name=='orders':
+  rect((4,3,28,28),'#926b47',dark);rect((7,6,25,25),'#d0ac74');rect((9,7,23,23),'#efe0b5');rect((14,6,17,8),'#b87154');line([(11,12),(20,12)],'#9f9675');line([(11,16),(20,16)],'#9f9675');line([(11,20),(17,20)],'#9f9675')
+ elif name in ['hoe','axe','pick','hammer']:
   line([(9,27),(23,6)],dark,5);line([(10,26),(23,7)],wood,3);line([(11,25),(21,9)],'#d9a969',1)
   if name=='axe':poly([(18,5),(24,6),(29,13),(23,18),(19,12)],steel);line([(24,8),(27,13),(24,16)],'#e2ebda',2)
   elif name=='pick':poly([(11,7),(19,3),(25,5),(29,12),(24,9),(18,7)],steel)

@@ -1,7 +1,7 @@
 extends RefCounted
 const Items = preload("res://game/items.gd")
 const SIZE := 24
-const TOOLS := ["hand","hoe","water","axe","pick","build"]
+const TOOLS := ["hand","hoe","water","axe","pick"]
 var slots: Array = []
 func _init() -> void:
  slots.resize(SIZE)
@@ -26,9 +26,12 @@ func swap(a: int,b: int) -> bool:
  return true
 func restore(value: Variant) -> bool:
  if not value is Array or value.size()!=SIZE: return false
+ var migrated: Array=value.duplicate()
+ for i in range(migrated.size()):
+  if migrated[i]=="build": migrated[i]=""
  var seen: Dictionary={}
- for id in value:
+ for id in migrated:
   if not id is String or (id!="" and (not Items.NAMES.has(id) or seen.has(id))): return false
   if id!="": seen[id]=true
- slots=value.duplicate()
+ slots=migrated
  return true

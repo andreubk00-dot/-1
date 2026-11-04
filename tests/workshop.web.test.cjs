@@ -30,7 +30,7 @@ function check(value,message){assert.ok(value,message);console.log('PASS:',messa
   await page.goto(base);await enter();
   let saved=await state();
   check(saved.bag.planks===0&&saved.progression.tool_level===1,'legacy browser save gains production defaults');
-  await page.keyboard.press('7');await delay(150);
+  await page.keyboard.press('b');await delay(150);
   await click(640,402); // Workshop in construction catalog.
   await click(664,432); // Cell (19,15), clear ground next to player.
   saved=await state();

@@ -10,6 +10,7 @@ var shade: ColorRect
 var header_title: Label
 var header_subtitle: Label
 var header_icon: TextureRect
+var window_tabs: HBoxContainer
 var slots: Array[Button] = []
 var money: Label
 var day_label: Label
@@ -192,9 +193,9 @@ func _build_hud() -> void:
  goal.custom_minimum_size=Vector2(192,34)
  quests.add_child(goal)
  quest.add_child(quests)
- for row in [["bag","I",144], ["build","B",205], ["book","H",266]]:
+ for row in [["bag","I",144], ["build","B",205], ["orders","J",266], ["book","H",327]]:
   var id: String=row[0]
-  var action: Callable=game._inventory_menu if id=="bag" else game._catalog if id=="build" else game._help
+  var action: Callable=game._inventory_menu if id=="bag" else game._catalog if id=="build" else game._orders_menu if id=="orders" else game._help
   var b:=button(str(row[1]),action,id)
   b.position=Vector2(886,int(row[2]))
   b.size=Vector2(56,48)
@@ -257,9 +258,14 @@ func _build_window() -> void:
  titles.size_flags_horizontal=Control.SIZE_EXPAND_FILL
  header_title=label("",23)
  header_subtitle=label("",11,"68775d")
+ header_subtitle.clip_text=true
+ header_subtitle.custom_minimum_size.x=180
  titles.add_child(header_title)
  titles.add_child(header_subtitle)
  header.add_child(titles)
+ window_tabs=HBoxContainer.new()
+ window_tabs.add_theme_constant_override("separation",4)
+ header.add_child(window_tabs)
  var close:=button("",func() -> void: modal.hide(),"close")
  close.custom_minimum_size=Vector2(36,36)
  header.add_child(close)
@@ -309,6 +315,8 @@ func hide_tooltip() -> void:
  if is_instance_valid(tooltip): tooltip.hide()
 
 func open_window(title: String, subtitle: String, id: String, kind: String) -> void:
+ game.building_mode=false
+ game.queued_action=null
  pending_item=""
  modal_notice=""
  product_status=null
@@ -323,6 +331,20 @@ func open_window(title: String, subtitle: String, id: String, kind: String) -> v
  header_subtitle.text=subtitle
  header_icon.texture=Items.icon(id)
  view=kind
+ for child in window_tabs.get_children():
+  window_tabs.remove_child(child)
+  child.queue_free()
+ window_tabs.visible=kind in ["inventory","catalog","orders"]
+ if window_tabs.visible:
+  for tab in [["inventory","bag","I"],["catalog","build","B"],["orders","orders","J"]]:
+   var target: String=tab[0]
+   var action: Callable=game._inventory_menu if target=="inventory" else game._catalog if target=="catalog" else game._orders_menu
+   var b:=button({"inventory":"Рюкзак","catalog":"Постройки","orders":"Заказы"}[target],action,tab[1])
+   b.add_theme_constant_override("icon_max_width",18)
+   b.custom_minimum_size.x=108 if target=="catalog" else 92
+   b.tooltip_text={"inventory":"Инвентарь","catalog":"Строительство","orders":"Заказы"}[target]
+   if target==kind: b.add_theme_stylebox_override("normal",style("74815a","b69a61",5,8))
+   window_tabs.add_child(b)
  modal_scroll.scroll_vertical=0
  modal.show()
  modal.modulate.a=0
@@ -349,6 +371,7 @@ func row_card(id: String, title: String, description: String) -> VBoxContainer:
 func cost_text(cost: Dictionary) -> String:
  var parts:=PackedStringArray()
  for id in cost:
+  if id not in ["wood","stone","coins","planks"]: continue
   if int(cost[id])>0: parts.append(str(cost[id])+" "+{"wood":"дерева","stone":"камня","coins":"монет","planks":"досок"}.get(id,id))
  return " · ".join(parts)
 
@@ -428,10 +451,8 @@ func show_catalog() -> void:
   var enabled: bool=not (id=="workshop" and game.workshop!=Vector2i(-1,-1))
   var text: String="Построить" if enabled else "Уже построено"
   column.add_child(button(text,func() -> void:
-   game.build_kind=kind
-   game._equip("build")
-   modal.hide(),"hammer",enabled,"build_"+id))
- modal_body.add_child(label("Размещение: нажмите на свободную землю рядом. Дороги, грядки и занятые клетки защищены.",11,"68775d"))
+   game._begin_build(kind),"hammer",enabled,"build_"+id))
+ modal_body.add_child(label("Выберите здание и место рядом. Красный контур — поставить нельзя. ПКМ / Esc — отменить.",11,"68775d"))
 
 func show_home() -> void:
  open_window("Дом, милый дом","ТИШИНА ВЕЧЕРА     /     ОТДЫХ И НОВЫЙ ДЕНЬ","house","home")
@@ -441,10 +462,17 @@ func show_home() -> void:
 
 func show_shop() -> void:
  open_window("Прилавок долины","СЕМЕНА И УРОЖАЙ     /     У ВАС %d МОНЕТ"%game.coins,"coin","shop")
- var seeds:=row_card("seeds","Семена репы · 5 шт.","20 монет · На посадку расходуется один пакет семян.")
- seeds.add_child(button("Купить за 20",game._buy_seeds,"coin",game.coins>=20,"buy_seeds"))
- var earned: int=game.bag.turnip*35+game.bag.crate*120
- var produce:=row_card("crate","Ваш урожай","Репа: %d × 35 · Ящики: %d × 120"%[game.bag.turnip,game.bag.crate])
+ var seeds:=row_card("seeds","Семена для огорода","Репа: 3 политых дня · Морковь: 4 политых дня")
+ var offers:=HBoxContainer.new()
+ for id in ["seeds","carrot_seeds"]:
+  var seed: String=id
+  var price: int=20 if id=="seeds" else 30
+  var b:=button("5 репы · 20 монет" if id=="seeds" else "5 моркови · 30 монет",func() -> void: game._buy_seeds(seed),id,game.coins>=price,"buy_"+id)
+  b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+  offers.add_child(b)
+ seeds.add_child(offers)
+ var earned: int=game.bag.turnip*35+game.bag.carrot*55+game.bag.crate*120
+ var produce:=row_card("crate","Ваш урожай","Репа: %d × 35 · Морковь: %d × 55 · Ящики: %d × 120"%[game.bag.turnip,game.bag.carrot,game.bag.crate])
  produce.add_child(button("Продать всё · %d монет"%earned,game._sell,"coin",earned>0,"sell"))
 
 func show_workshop() -> void:
@@ -518,9 +546,9 @@ func show_storage() -> void:
 
 func show_help() -> void:
  open_window("Записи хозяина","УПРАВЛЕНИЕ И ПЕРВЫЕ ШАГИ","book","help")
- row_card("hoe","Первый урожай","Мотыга → семена → полив. Три политых дня — и репу можно собрать свободной рукой. Отдохните в доме, чтобы начать новый день.")
+ row_card("hoe","Первый урожай","Мотыга → семена → полив. Репе нужно 3 политых дня, моркови — 4. Урожай собирается свободной рукой. Отдохните в доме, чтобы начать новый день.")
  row_card("bag","Всё под рукой","I или Tab — инвентарь. Перетащите инструменты и предметы в любые ячейки хотбара. 1–9 и 0 выбирают ячейку; колесо — соседнюю. ПКМ очищает ячейку.")
- row_card("build","Развивайте хозяйство","B — постройки. В мастерской делайте доски и ящики урожая, улучшайте инструменты. WASD — движение, ЛКМ — работа рядом, E — перед собой. F5 — сохранить, M — звук, Esc — закрыть окно.")
+ row_card("build","Развивайте хозяйство","B — отдельная вкладка построек, J — заказы. В мастерской делайте доски и ящики урожая, улучшайте инструменты. WASD — движение, ЛКМ — работа рядом, E — перед собой. F5 — сохранить, M — звук, Esc — закрыть окно.")
 
 func refresh() -> void:
  game.inventory_layout.reconcile(game.bag)
@@ -539,21 +567,28 @@ func refresh() -> void:
   if game.workshop==Vector2i(-1,-1): text="Постройте мастерскую [B]"
   elif game.progression.tool_level==1: text="Изготовьте доски и улучшите инструменты"
   elif game.progression.crates_sold==0: text="Продайте первый ящик урожая"
-  else: text="Усадьба процветает. Развивайтесь!"
+  elif game.orders.completed==0: text="Выполните первый заказ [J]"
+  else: text="Заказы выполнены: %d · Следующий урожай!"%game.orders.completed
  goal.text=text
  var held: String=game.temporary_item if game.temporary_item!="" else game.hotbar.slots[game.hotbar.active]
  held_label.text=Items.item_name(held)
  if held in ["axe","pick","hoe","water"]: held_label.text+=" · ур. %d"%game.progression.tool_level
- if held=="build": held_label.text+=" · [B] каталог"
+ if game.building_mode:
+  var cost: Dictionary=game.Progression.BUILDINGS[game.build_kind]
+  held_label.text="%s · %s · ПКМ / Esc: отмена"%[cost.name,cost_text(cost)]
+ if not game.building_mode and not modal.visible and game.plots.has(game.hovered) and game.plots[game.hovered].stage>=0:
+  var plot: Dictionary=game.plots[game.hovered]
+  var crop: Dictionary=game.Crops.spec(plot)
+  held_label.text+=" · %s %d/%d · %s"%[crop.name,plot.stage,crop.days,"Готово" if plot.stage>=crop.days else "Полито" if plot.wet else "Нужна вода"]
  if pending_item!="" and view=="inventory": held_label.text="Назначить: "+Items.item_name(pending_item)+" · выберите ячейку"
  for i in range(slots.size()):
   var slot=slots[i]
   var id: String=game.hotbar.slots[i]
   var amount: int=int(game.bag[id]) if game.bag.has(id) else -1
-  if slot.item_id!=id or slot.amount!=amount or slot.active!=(game.hotbar.active==i and game.temporary_item==""):
+  if slot.item_id!=id or slot.amount!=amount or slot.active!=(game.hotbar.active==i and game.temporary_item=="" and not game.building_mode):
    slot.item_id=id
    slot.amount=amount
-   slot.active=game.hotbar.active==i and game.temporary_item==""
+   slot.active=game.hotbar.active==i and game.temporary_item=="" and not game.building_mode
    slot.add_theme_stylebox_override("normal",style("5f704b","e5c683",4,0) if slot.active else style("354c3e","52634a",4,0))
    slot.queue_redraw()
  toast.visible=game.notification_time>0 and (not modal.visible or modal_notice!="")
@@ -612,3 +647,23 @@ func drop_into_inventory(index: int, data: Dictionary) -> void:
 func block_pointer(blocked: bool) -> void:
  pause_shield.visible=blocked
  if blocked: hide_tooltip()
+
+func show_orders() -> void:
+ open_window("Заказы долины","ДОСТАВКА ПРОДУКЦИИ     /     СДАЙТЕ ЗАКАЗ У ПРИЛАВКА","orders","orders")
+ var offer: Dictionary=game.orders.current()
+ if game.day<=game.orders.last_day:
+  row_card("check","На сегодня всё выполнено","Следующий заказ появится утром. Выполнено заказов: %d"%game.orders.completed)
+  return
+ var column:=row_card("orders",offer.name,offer.customer+" · Награда: %d монет и %d опыта"%[offer.coins,offer.xp])
+ var row:=HBoxContainer.new()
+ row.add_theme_constant_override("separation",14)
+ for id in offer.cost:
+  var part:=HBoxContainer.new()
+  part.add_child(icon(id,30))
+  part.add_child(label("%s · %d / %d"%[Items.item_name(id),game.bag[id],offer.cost[id]],13))
+  row.add_child(part)
+ column.add_child(row)
+ column.add_child(button("Сдать заказ",game._submit_order,"check",game._can_deliver() and game.orders.can_submit(game.bag,game.day),"submit_order"))
+ var text: String="Заказ можно сдать здесь." if game._can_deliver() else "Подойдите к прилавку долины, чтобы сдать продукцию."
+ modal_body.add_child(label(text,12,"68775d"))
+ modal_body.add_child(label("Не более одного заказа в день. Продукция расходуется только при успешной сдаче.",11,"68775d"))

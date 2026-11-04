@@ -8,9 +8,11 @@ var target := Vector2i.ZERO
 var direction := Vector2.DOWN
 var impact := false
 var ghost := ""
+var planting_item := "seeds"
 func active() -> bool: return time<duration
 func progress() -> float: return clampf(time/duration,0,1)
-func start(index: int, player: Vector2, cell: Vector2i, removed_kind: String = "") -> void:
+func start(index: int, player: Vector2, cell: Vector2i, removed_kind: String = "", seed_id: String="seeds") -> void:
+ planting_item=seed_id
  tool=index
  target=cell
  direction=(Vector2(cell*24+Vector2i(12,12))-player).normalized()
@@ -73,4 +75,4 @@ func draw_tool(game: Node2D, player: Vector2) -> void:
  else:
   hand=shoulder.lerp(target_pos, sin(t*PI)*0.65)
   game.draw_line(shoulder,hand,Color("e2b98c"),3)
-  game.draw_texture_rect(Items.icon("seeds" if tool==3 else "hand"),Rect2(hand-Vector2(5,6),Vector2(12,12)),false)
+  game.draw_texture_rect(Items.icon(planting_item if tool==3 else "hand"),Rect2(hand-Vector2(5,6),Vector2(12,12)),false)
