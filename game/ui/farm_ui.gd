@@ -1,5 +1,6 @@
 extends CanvasLayer
 const Items = preload("res://game/items.gd")
+const WorldMap = preload("res://game/ui/world_map.gd")
 const Slot = preload("res://game/ui/item_slot.gd")
 var game: Node2D
 var font: Font
@@ -15,6 +16,11 @@ var slots: Array[Button] = []
 var money: Label
 var day_label: Label
 var time_label: Label
+var weather_text: Label
+var region_label: Label
+var fishing_panel: PanelContainer
+var fishing_text: Label
+var fishing_meter: ProgressBar
 var weather_icon: TextureRect
 var energy_label: Label
 var energy_bar: ProgressBar
@@ -179,9 +185,27 @@ func _build_hud() -> void:
  time_label=label("",21,"efdfba")
  dates.add_child(day_label)
  dates.add_child(time_label)
- dates.add_child(label("ВЕСНА · ЯСНО",10,"aebd9c"))
+ weather_text=label("",10,"aebd9c")
+ dates.add_child(weather_text)
  date_row.add_child(dates)
  date.add_child(date_row)
+ var region_card:=panel(root,Vector2(400,18),Vector2(324,37))
+ region_label=label("",11,"d5d8af")
+ region_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+ region_card.add_child(region_label)
+ region_card.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
+ region_card.tooltip_text="Открыть карту долины [G]"
+ region_card.gui_input.connect(func(event: InputEvent) -> void:
+  if event is InputEventMouseButton and event.pressed and event.button_index==MOUSE_BUTTON_LEFT: show_map())
+ fishing_panel=panel(root,Vector2(330,315),Vector2(300,57))
+ var fishing_column:=VBoxContainer.new()
+ fishing_panel.add_child(fishing_column)
+ fishing_text=label("",12,"e8dcaa")
+ fishing_text.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+ fishing_column.add_child(fishing_text)
+ fishing_meter=_bar("d9b56c",8)
+ fishing_column.add_child(fishing_meter)
+ fishing_panel.hide()
  var quest := panel(root,Vector2(18,130),Vector2(226,84))
  var quests := VBoxContainer.new()
  var qtitle := HBoxContainer.new()
@@ -195,7 +219,7 @@ func _build_hud() -> void:
  quest.add_child(quests)
  for row in [["bag","I",144], ["build","B",205], ["orders","J",266], ["book","H",327]]:
   var id: String=row[0]
-  var action: Callable=game._inventory_menu if id=="bag" else game._catalog if id=="build" else game._orders_menu if id=="orders" else game._help
+  var action: Callable=game._inventory_menu if id=="bag" else game._catalog if id=="build" else game._orders_menu if id=="orders" else show_map if id=="map" else game._help
   var b:=button(str(row[1]),action,id)
   b.position=Vector2(886,int(row[2]))
   b.size=Vector2(56,48)
@@ -212,6 +236,7 @@ func _build_hud() -> void:
  held_label.position=Vector2(180,428)
  held_label.size=Vector2(600,18)
  held_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+ held_label.clip_text=true
  held_label.add_theme_color_override("font_shadow_color",Color("1d352f"))
  held_label.add_theme_constant_override("shadow_offset_y",1)
  root.add_child(held_label)
@@ -471,8 +496,8 @@ func show_shop() -> void:
   b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
   offers.add_child(b)
  seeds.add_child(offers)
- var earned: int=game.bag.turnip*35+game.bag.carrot*55+game.bag.crate*120
- var produce:=row_card("crate","Ваш урожай","Репа: %d × 35 · Морковь: %d × 55 · Ящики: %d × 120"%[game.bag.turnip,game.bag.carrot,game.bag.crate])
+ var earned: int=game.bag.turnip*35+game.bag.carrot*55+game.bag.crate*120+game.bag.fish*45
+ var produce:=row_card("crate","Ваш урожай","Репа: %d × 35 · Морковь: %d × 55 · Ящики: %d × 120 · Рыба: %d × 45"%[game.bag.turnip,game.bag.carrot,game.bag.crate,game.bag.fish])
  produce.add_child(button("Продать всё · %d монет"%earned,game._sell,"coin",earned>0,"sell"))
 
 func show_workshop() -> void:
@@ -481,13 +506,14 @@ func show_workshop() -> void:
  tabs.add_child(button("Производство",show_workshop,"planks"))
  tabs.add_child(button("Инструменты · ур. %d"%game.progression.tool_level,game._upgrade_menu,"axe",true,"tools"))
  tabs.add_child(button("Здание",func() -> void: manage_building("workshop"),"workshop",true,"manage_workshop"))
+ tabs.add_child(button("Переплавка",show_smelter,"ingot",true,"smelter"))
  modal_body.add_child(tabs)
  product_status=label(game._production_status(),12,"6c775d")
  modal_body.add_child(product_status)
  var rows:=HBoxContainer.new()
  rows.add_theme_constant_override("separation",10)
  modal_body.add_child(rows)
- for id in game.Progression.RECIPES:
+ for id in ["planks","crate"]:
   var recipe: String=id
   var spec: Dictionary=game.Progression.RECIPES[id]
   var p:=PanelContainer.new()
@@ -506,7 +532,7 @@ func show_workshop() -> void:
    if game.bag[material]<spec.cost[material]: enabled=false
   col.add_child(button("В очередь",func() -> void: game._start_recipe(recipe),"hammer",enabled,"recipe_"+id))
   rows.add_child(p)
- modal_body.add_child(button("Забрать готовое · %d досок, %d ящиков"%[game.progression.products.planks,game.progression.products.crate],game._collect_products,"crate",game.progression.has_products(),"collect"))
+ modal_body.add_child(button("Забрать готовое · %d досок, %d ящиков, %d слитков"%[game.progression.products.planks,game.progression.products.crate,game.progression.products.ingot],game._collect_products,"crate",game.progression.has_products(),"collect"))
 
 func show_upgrade() -> void:
  open_window("Инструменты мастера","ПРОЧНОСТЬ И ЭФФЕКТИВНОСТЬ     /     ТЕКУЩИЙ УРОВЕНЬ %d / 3"%game.progression.tool_level,"axe","upgrade")
@@ -546,8 +572,11 @@ func show_storage() -> void:
 
 func show_help() -> void:
  open_window("Записи хозяина","УПРАВЛЕНИЕ И ПЕРВЫЕ ШАГИ","book","help")
+ modal_body.add_child(button("Включить звук" if game.muted else "Выключить звук",game._toggle_sound,"settings",true,"toggle_sound"))
  row_card("hoe","Первый урожай","Мотыга → семена → полив. Репе нужно 3 политых дня, моркови — 4. Урожай собирается свободной рукой. Отдохните в доме, чтобы начать новый день.")
  row_card("bag","Всё под рукой","I или Tab — инвентарь. Перетащите инструменты и предметы в любые ячейки хотбара. 1–9 и 0 выбирают ячейку; колесо — соседнюю. ПКМ очищает ячейку.")
+ row_card("map","Большая долина","G — карта и поручения жителей. В лесу собирайте ягоды рукой: их можно съесть из хотбара. Назначьте удочку из рюкзака: нажмите на воду рядом, затем E на зелёной полосе. Рыбу можно продать у прилавка.")
+ row_card("rain","Погода и ресурсы","Раз в шесть дней приходит дождь и поливает посаженные культуры. Дикие деревья и камни новых районов восстанавливаются каждые три дня; постройки и грядки защищены. В кряже добывается медная руда для мастерской.")
  row_card("build","Развивайте хозяйство","B — отдельная вкладка построек, J — заказы. В мастерской делайте доски и ящики урожая, улучшайте инструменты. WASD — движение, ЛКМ — работа рядом, E — перед собой. F5 — сохранить, M — звук, Esc — закрыть окно.")
 
 func refresh() -> void:
@@ -560,7 +589,16 @@ func refresh() -> void:
  xp_bar.value=game.experience%25
  day_label.text="ДЕНЬ %02d"%game.day
  time_label.text="%02d:%02d"%[int(game.minutes)/60,int(game.minutes)%60]
- weather_icon.texture=Items.icon("moon" if game.minutes>=1080 else "sun")
+ weather_icon.texture=Items.icon("rain" if game.Frontier.rainy(game.day) else "moon" if game.minutes>=1080 else "sun")
+ weather_text.text="ВЕСНА · ДОЖДЬ" if game.Frontier.rainy(game.day) else "ВЕСНА · ЯСНО"
+ region_label.text=game.Frontier.REGIONS[game.Frontier.region(game._cell(game.player))]+"    ·    [G] КАРТА"
+ fishing_panel.visible=game.fishing.active and not modal.visible
+ if game.fishing.active:
+  var ready: bool=game.fishing.ready()
+  fishing_text.text="КЛЮЁТ! Нажмите E / действие" if ready else "Дождитесь поклёвки…"
+  fishing_meter.max_value=game.fishing.bite_at+game.fishing.WINDOW
+  fishing_meter.value=game.fishing.elapsed
+  fishing_meter.add_theme_stylebox_override("fill",style("9cbd82" if ready else "ccaa6b","9cbd82" if ready else "ccaa6b",3,0))
  var goals: Array=["Подготовьте первую грядку","Посадите семена репы","Поливайте и отдыхайте дома","Продайте первый урожай","Постройте склад [B]"]
  var text: String=goals[mini(game.quest_stage,4)]
  if game.quest_stage>=5:
@@ -568,7 +606,7 @@ func refresh() -> void:
   elif game.progression.tool_level==1: text="Изготовьте доски и улучшите инструменты"
   elif game.progression.crates_sold==0: text="Продайте первый ящик урожая"
   elif game.orders.completed==0: text="Выполните первый заказ [J]"
-  else: text="Заказы выполнены: %d · Следующий урожай!"%game.orders.completed
+  else: text="Исследуйте долину [G] · Поручения: %d / 3"%game.frontier.completed.size()
  goal.text=text
  var held: String=game.temporary_item if game.temporary_item!="" else game.hotbar.slots[game.hotbar.active]
  held_label.text=Items.item_name(held)
@@ -580,6 +618,10 @@ func refresh() -> void:
   var plot: Dictionary=game.plots[game.hovered]
   var crop: Dictionary=game.Crops.spec(plot)
   held_label.text+=" · %s %d/%d · %s"%[crop.name,plot.stage,crop.days,"Готово" if plot.stage>=crop.days else "Полито" if plot.wet else "Нужна вода"]
+ if not modal.visible and not game.building_mode:
+  for id in game.Frontier.NPCS:
+   if game.Frontier.NPCS[id].cell==game.hovered: held_label.text=game.Frontier.NPCS[id].name+" · подойдите и нажмите"
+  if game.Frontier.BUSHES.has(game.hovered): held_label.text="Лесные ягоды · собрать рукой" if game.frontier.berry_ready(game.hovered,game.day) else "Куст отдыхает · ягоды вернутся через два дня"
  if pending_item!="" and view=="inventory": held_label.text="Назначить: "+Items.item_name(pending_item)+" · выберите ячейку"
  for i in range(slots.size()):
   var slot=slots[i]
@@ -598,7 +640,7 @@ func refresh() -> void:
   toast.add_theme_color_override("font_color",Color("344b40" if modal.visible else "f7e6be"))
   toast.add_theme_color_override("font_shadow_color",Color("e8d9b4" if modal.visible else "203a31"))
  held_label.visible=not modal.visible
- dusk.color.a=clampf((game.minutes-1050)/600,0,0.35)
+ dusk.color.a=maxf(0.08 if game.Frontier.rainy(game.day) else 0.0,clampf((game.minutes-1050)/600,0,0.35))
  if is_instance_valid(product_status): product_status.text=game._production_status()
  if tooltip.visible:
   var mouse:=root.get_global_mouse_position()
@@ -667,3 +709,52 @@ func show_orders() -> void:
  var text: String="Заказ можно сдать здесь." if game._can_deliver() else "Подойдите к прилавку долины, чтобы сдать продукцию."
  modal_body.add_child(label(text,12,"68775d"))
  modal_body.add_child(label("Не более одного заказа в день. Продукция расходуется только при успешной сдаче.",11,"68775d"))
+
+func show_map() -> void:
+ if modal.visible and view=="map": modal.hide(); return
+ open_window("Карта большой долины","80 × 56 КЛЕТОК     /     ИССЛЕДУЙТЕ ДОРОГИ НА ВОСТОКЕ","map","map")
+ var map_view:=WorldMap.new()
+ map_view.game=game
+ modal_body.add_child(map_view)
+ modal_body.add_child(label("ПОРУЧЕНИЯ ЖИТЕЛЕЙ · %d / 3"%game.frontier.completed.size(),11))
+ var progress: Array=[]
+ for id in game.Frontier.NPCS:
+  var npc: Dictionary=game.Frontier.NPCS[id]
+  var done: bool=game.frontier.completed.has(id)
+  progress.append(npc.name.split(" · ")[0]+" · "+("✓" if done else "%s %d / %d"%[Items.item_name(npc.item),game.bag[npc.item],npc.count]))
+ modal_body.add_child(label("     |     ".join(progress),11,"68775d"))
+
+func show_villager(id: String) -> void:
+ var npc: Dictionary=game.Frontier.NPCS[id]
+ open_window(npc.name,"ЖИТЕЛИ ДОЛИНЫ     /     РАЗГОВОР И ПОМОЩЬ СОСЕДЯМ","person","villager")
+ var top:=HBoxContainer.new()
+ top.add_theme_constant_override("separation",18)
+ var portrait:=TextureRect.new()
+ var atlas:=AtlasTexture.new()
+ atlas.atlas=game.textures.portraits
+ atlas.region=Rect2(npc.portrait*64,0,64,64)
+ portrait.texture=atlas
+ portrait.custom_minimum_size=Vector2(104,104)
+ portrait.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+ top.add_child(portrait)
+ var speech:=label(npc.intro,14)
+ speech.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+ speech.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+ speech.custom_minimum_size.x=480
+ top.add_child(speech)
+ modal_body.add_child(top)
+ if game.frontier.completed.has(id):
+  row_card("check","Спасибо за помощь!","Вы выполнили это поручение. Продолжайте исследовать долину и развивать хозяйство.")
+ else:
+  var card:=row_card(npc.item,npc.request,"В рюкзаке: %d / %d · Награда: %d монет и %d опыта"%[game.bag[npc.item],npc.count,npc.coins,npc.xp])
+  card.add_child(button("Передать припасы",func() -> void: game._complete_villager(id),"check",game.frontier.can_complete(id,game.bag),"villager_deliver"))
+
+func show_smelter() -> void:
+ open_window("Медная мастерская","ПЕРЕПЛАВКА РУДЫ     /     ОБЩАЯ ОЧЕРЕДЬ ИЗ ТРЁХ ЗАДАНИЙ","ingot","smelter")
+ product_status=label(game._production_status(),12,"6c775d")
+ modal_body.add_child(product_status)
+ var col:=row_card("ingot","Медный слиток","3 медной руды + 1 дерево · 45 игровых минут")
+ col.add_child(label("Руда добывается киркой из камней в каменном кряже на юго-востоке.",12,"68775d"))
+ col.add_child(button("В очередь",func() -> void: game._start_recipe("ingot"); show_smelter(),"hammer",game.progression.jobs.size()<3 and game.bag.ore>=3 and game.bag.wood>=1,"recipe_ingot"))
+ modal_body.add_child(button("Забрать готовое",func() -> void: game._collect_products(); show_smelter(),"crate",game.progression.has_products(),"collect"))
+ modal_body.add_child(button("К производству",show_workshop,"workshop"))

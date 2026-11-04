@@ -1,19 +1,21 @@
 extends RefCounted
 const Items = preload("res://game/items.gd")
 const SIZE := 24
-const TOOLS := ["hand","hoe","water","axe","pick"]
+const TOOLS := ["hand","hoe","water","axe","pick","rod"]
 var slots: Array = []
 func _init() -> void:
  slots.resize(SIZE)
  slots.fill("")
- for i in range(TOOLS.size()): slots[i]=TOOLS[i]
+ for i in range(TOOLS.size()-1): slots[i]=TOOLS[i]
 func reconcile(inventory: Dictionary) -> void:
  for i in range(SIZE):
   var id: String=slots[i]
   if id!="" and not TOOLS.has(id) and int(inventory.get(id,0))<=0: slots[i]=""
- for id in TOOLS: _ensure(id)
+ for id in TOOLS:
+  if id!="rod": _ensure(id)
  for id in inventory:
   if int(inventory[id])>0 and Items.NAMES.has(id): _ensure(id)
+ _ensure("rod")
 func _ensure(id: String) -> void:
  if slots.has(id): return
  var index:=slots.find("")

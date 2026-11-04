@@ -9,8 +9,10 @@ const Effects = preload("res://game/work_effects.gd")
 const Crops = preload("res://game/crops.gd")
 const Orders = preload("res://game/orders.gd")
 const Landscape = preload("res://game/landscape.gd")
+const Frontier = preload("res://game/frontier.gd")
+const Fishing = preload("res://game/fishing.gd")
 const TILE := 24
-const WORLD := Vector2i(48, 36)
+const WORLD := Frontier.SIZE
 const SAVE_VERSION := 2
 const HOUSE := Rect2i(8, 6, 5, 4)
 const SHOP := Rect2i(27, 9, 3, 2)
@@ -22,6 +24,8 @@ var moving := false
 var selected := 0
 var building_mode := false
 var orders = Orders.new()
+var frontier = Frontier.new()
+var fishing = Fishing.new()
 var hotbar = Hotbar.new()
 var inventory_layout = InventoryLayout.new()
 var hud: CanvasLayer
@@ -31,7 +35,7 @@ var day := 1
 var minutes := 360.0
 var energy := 100
 var coins := 80
-var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0}
+var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0}
 var water: Dictionary = {}
 var resources: Dictionary = {}
 var plots: Dictionary = {}
@@ -51,7 +55,7 @@ var elapsed := 0.0
 var quest_stage := 0
 var experience := 0
 var active_storage := Vector2i(-1, -1)
-var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0}
+var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0}
 var progression = Progression.new()
 var workshop := Vector2i(-1, -1)
 var build_kind := "warehouse"
@@ -75,7 +79,7 @@ func _ready() -> void:
  test_mode = "--self-test" in OS.get_cmdline_user_args()
  if test_mode: save_path = "user://test_farm.json"
  font = load("res://art/ui.ttf")
- for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop", "crops"]:
+ for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop", "crops", "pine", "bush", "npc", "portraits", "map"]:
   textures[key] = load("res://art/" + key + ".png")
  for cell in JSON.parse_string(FileAccess.get_file_as_string("res://game/water.json")):
   water[Vector2i(int(cell[0]), int(cell[1]))] = true
@@ -93,6 +97,15 @@ func _ready() -> void:
  sound = AudioStreamPlayer.new()
  sound.volume_db = -15
  add_child(sound)
+ var ambient:=AudioStreamPlayer.new()
+ var nature: AudioStreamWAV=load("res://art/nature.wav")
+ nature.loop_mode=AudioStreamWAV.LOOP_FORWARD
+ nature.loop_begin=0
+ nature.loop_end=nature.data.size()/2
+ ambient.stream=nature
+ ambient.volume_db=-26
+ add_child(ambient)
+ if not test_mode: ambient.play()
  _make_ui()
  _update_ui()
  if web_platform != null:
@@ -107,8 +120,8 @@ func _ready() -> void:
 func _generate_resources() -> void:
  var rng := RandomNumberGenerator.new()
  rng.seed = 50178
- for y in range(2, WORLD.y - 2):
-  for x in range(2, WORLD.x - 2):
+ for y in range(2, 36 - 2):
+  for x in range(2, 48 - 2):
    var c := Vector2i(x, y)
    if water.has(c) or HOUSE.grow(2).has_point(c) or SHOP.grow(2).has_point(c): continue
    if y in [12, 13] or x in [22, 23]: continue
@@ -118,8 +131,10 @@ func _generate_resources() -> void:
  # Accessible materials for the first building.
  for c in [Vector2i(14, 16), Vector2i(15, 20), Vector2i(17, 22)]: resources[c] = {"kind": "tree", "hp": 3}
  for c in [Vector2i(26, 16), Vector2i(27, 19), Vector2i(25, 22)]: resources[c] = {"kind": "rock", "hp": 3}
+ _seed_frontier_resources()
 
 func _process(delta: float) -> void:
+ if web_platform==null: AudioServer.set_bus_mute(0,muted)
  if web_platform != null:
   web_paused = bool(web_platform.paused)
   hud.block_pointer(web_paused)
@@ -133,10 +148,12 @@ func _process(delta: float) -> void:
    return
   web_was_paused = false
   if bool(web_platform.takeAction()) and not modal.visible:
-   queued_action = _front_cell()
+   if fishing.active: _reel_fish()
+   else: queued_action = _front_cell()
  effects.update(delta,self)
  elapsed += delta
  action_cooldown = maxf(0, action_cooldown - delta)
+ if not modal.visible and fishing.advance(delta): _notify("Рыба ушла. Дождитесь зелёной полосы в следующий раз.")
  if queued_action != null:
   var action_cell: Vector2i = queued_action
   queued_action = null
@@ -150,7 +167,7 @@ func _process(delta: float) -> void:
   if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT): input.x += 1
   if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP): input.y -= 1
   if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN): input.y += 1
-  if effects.active(): input=Vector2.ZERO
+  if effects.active() or fishing.active: input=Vector2.ZERO
   moving = input.length_squared() > 0
   if moving:
    facing = input.normalized()
@@ -163,6 +180,13 @@ func _process(delta: float) -> void:
   _advance_production(delta * 1.3)
   minutes += delta * 1.3
   if minutes >= 1320: _sleep()
+  var region: String=Frontier.region(_cell(player))
+  if not frontier.visited.has(region):
+   frontier.visited.append(region)
+   _notify("Открыто: "+Frontier.REGIONS[region]+" · [G] карта")
+  if Frontier.rainy(day):
+   for plot in plots.values():
+    if plot.stage>=0 and plot.stage<int(Crops.spec(plot).days): plot.wet=true
   autosave_clock += delta
   if autosave_clock > 30:
    autosave_clock = 0
@@ -191,6 +215,9 @@ func _in_world(c: Vector2i) -> bool:
  return c.x >= 1 and c.y >= 1 and c.x < WORLD.x - 1 and c.y < WORLD.y - 1
 
 func _solid(c: Vector2i) -> bool:
+ if Frontier.BUSHES.has(c): return true
+ for npc in Frontier.NPCS.values():
+  if npc.cell==c: return true
  if workshop != Vector2i(-1, -1) and Rect2i(workshop, Vector2i(3, 2)).has_point(c): return true
  if not _in_world(c) or water.has(c) or resources.has(c) or HOUSE.has_point(c) or SHOP.has_point(c): return true
  for b in buildings:
@@ -223,11 +250,13 @@ func _unhandled_input(event: InputEvent) -> void:
   if event.keycode == KEY_ESCAPE:
    if modal.visible: modal.hide()
    elif building_mode: _cancel_build()
+   elif fishing.active: fishing.cancel(); _notify("Рыбалка отменена")
    else: _help()
    get_viewport().set_input_as_handled()
    return
   if event.physical_keycode==KEY_B: _catalog(); return
   if event.physical_keycode==KEY_J: _orders_menu(); return
+  if event.physical_keycode==KEY_G: hud.show_map(); return
   if event.keycode==KEY_F5:
    if _save_game(): _notify("Хозяйство сохранено")
    return
@@ -238,14 +267,16 @@ func _unhandled_input(event: InputEvent) -> void:
    hud.slot_pressed(slot)
    return
   if modal.visible: return
-  if event.physical_keycode==KEY_E or event.keycode==KEY_SPACE: queued_action=_front_cell()
+  if event.physical_keycode==KEY_E or event.keycode==KEY_SPACE:
+   if fishing.active: _reel_fish()
+   else: queued_action=_front_cell()
   if event.physical_keycode==KEY_H: _help()
-  if event.physical_keycode==KEY_M:
-   muted=not muted
-   _notify("Звук выключен" if muted else "Звук включён")
+  if event.physical_keycode==KEY_M: _toggle_sound()
  if modal.visible: return
  if event is InputEventMouseButton and event.pressed:
-  if event.button_index==MOUSE_BUTTON_LEFT: queued_action=_cell(get_global_mouse_position())
+  if event.button_index==MOUSE_BUTTON_LEFT:
+   if fishing.active: _reel_fish()
+   else: queued_action=_cell(get_global_mouse_position())
   elif event.button_index==MOUSE_BUTTON_WHEEL_UP: _select_slot(posmod(hotbar.active-1,10),false)
   elif event.button_index==MOUSE_BUTTON_WHEEL_DOWN: _select_slot((hotbar.active+1)%10,false)
 
@@ -268,6 +299,10 @@ func _perform_action(c: Vector2i) -> bool:
  action_cooldown = 0.18
  if Vector2(c * TILE + Vector2i(12, 12)).distance_to(player) > TILE * 2.25:
   _notify("Подойдите ближе"); return false
+ if not building_mode:
+  for id in Frontier.NPCS:
+   if Frontier.NPCS[id].cell==c:
+    hud.show_villager(id); return true
  if HOUSE.has_point(c):
   _home(); return true
  if SHOP.has_point(c):
@@ -277,6 +312,13 @@ func _perform_action(c: Vector2i) -> bool:
    _storage(building); return true
  if workshop != Vector2i(-1, -1) and Rect2i(workshop, Vector2i(3, 2)).has_point(c):
   _workshop_menu(); return true
+ if not building_mode:
+  if selected==7: return _cast_fish(c)
+  if selected==8: return _eat_berry()
+  if selected==0 and Frontier.BUSHES.has(c):
+   if frontier.gather(c,day,bag):
+    _gain_xp(2); _play("pick"); _notify("+2 лесных ягоды · можно съесть из хотбара"); return true
+   _notify("Ягоды восстанавливаются через два дня"); return false
  if not _in_world(c) or water.has(c):
   _notify("Здесь нельзя работать"); return false
  if building_mode: return _build(c)
@@ -310,7 +352,8 @@ func _perform_action(c: Vector2i) -> bool:
    resources.erase(c)
    _gain_xp(3)
    bag["wood" if kind == "tree" else "stone"] += 8 if kind == "tree" else 5
-   _notify("+8 дерева" if kind == "tree" else "+5 камня")
+   if kind=="rock" and Frontier.region(c)=="ridge": bag.ore+=2
+   _notify("+8 дерева" if kind=="tree" else "+5 камня · +2 медной руды" if Frontier.region(c)=="ridge" else "+5 камня")
   return true
  if _solid(c): _notify("Это место занято"); return false
  if selected == 1:
@@ -370,7 +413,12 @@ func _build(c: Vector2i) -> bool:
 
 func _sleep() -> void:
  _advance_production(1440.0 - minutes + 360.0)
+ if Frontier.rainy(day):
+  for plot in plots.values():
+   if plot.stage>=0: plot.wet=true
+ fishing.cancel()
  day += 1
+ if day%3==0: _seed_frontier_resources()
  minutes = 360
  energy = 100
  for c in plots:
@@ -378,12 +426,13 @@ func _sleep() -> void:
   plots[c].wet = false
  modal.hide()
  _save_game()
- _notify("День %d. Новый рассвет — новые возможности." % day)
+ _notify("День %d. %s" % [day,"Дождь польёт ваши грядки." if Frontier.rainy(day) else "Новый рассвет — новые возможности."])
 
 func _sell() -> void:
- if bag.turnip <= 0 and bag.carrot<=0 and bag.crate <= 0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
- var earned: int = bag.turnip * 35 + bag.carrot*55 + bag.crate * 120
+ if bag.turnip <= 0 and bag.carrot<=0 and bag.crate <= 0 and bag.fish<=0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
+ var earned: int = bag.turnip * 35 + bag.carrot*55 + bag.crate * 120 + bag.fish*45
  bag.carrot=0
+ bag.fish=0
  progression.crates_sold += bag.crate
  bag.crate = 0
  coins += earned
@@ -415,9 +464,11 @@ func _burst(c: Vector2i, color: Color) -> void:
   particles.append({"pos": Vector2(c * TILE + Vector2i(12, 12)), "vel": Vector2(randf_range(-22, 22), randf_range(-35, -12)), "life": 0.55, "color": color})
 
 func _draw() -> void:
+ var visible_world:=Rect2(camera.get_screen_center_position()-Vector2(400,240),Vector2(800,480)).grow(90)
  draw_texture(textures.ground, Vector2.ZERO)
  # Field rows are inset so individual tiles remain legible.
  for c in plots:
+  if not visible_world.has_point(Vector2(c*TILE)): continue
   var p := Vector2(c * TILE)
   var soil := Color("69503f") if plots[c].wet else Color("997150")
   draw_style_box(_world_style(soil), Rect2(p + Vector2(1, 1), Vector2(22, 22)))
@@ -428,6 +479,7 @@ func _draw() -> void:
    draw_texture_rect_region(textures.crops,Rect2(p,Vector2(24,24)),Rect2(clampi(stage,0,4)*24,row*24,24,24))
  # Pond sparkles have no collision and use the same pixel scale as the shore.
  for c in water:
+  if not visible_world.has_point(Vector2(c*TILE)): continue
   if (c.x * 7 + c.y * 3) % 11 == 0:
    var p := Vector2(c * TILE) + Vector2(4 + int(elapsed * 2 + c.y) % 12, 9)
    draw_line(p, p + Vector2(5, 0), Color(0.75, 0.87, 0.81, 0.5 + sin(elapsed * 2 + c.x) * 0.25))
@@ -435,11 +487,17 @@ func _draw() -> void:
  var objects: Array[Dictionary] = []
  if effects.active() and effects.ghost!="": objects.append({"y": (effects.target.y+1)*TILE,"kind":"ghost","cell":effects.target})
  for c in resources:
+  if not visible_world.has_point(Vector2(c*TILE)): continue
   objects.append({"y": (c.y + 1) * TILE, "kind": resources[c].kind, "cell": c})
  objects.append({"y": HOUSE.end.y * TILE, "kind": "house", "cell": HOUSE.position})
  objects.append({"y": SHOP.end.y * TILE, "kind": "shop", "cell": SHOP.position})
  if workshop != Vector2i(-1, -1): objects.append({"y": (workshop.y + 2) * TILE, "kind": "workshop", "cell": workshop})
  for b in buildings: objects.append({"y": (b.y + 2) * TILE, "kind": "shed", "cell": b})
+ for id in Frontier.NPCS:
+  var npc: Dictionary=Frontier.NPCS[id]
+  if visible_world.has_point(Vector2(npc.cell*TILE)): objects.append({"y":(npc.cell.y+1)*TILE,"kind":"npc","cell":npc.cell,"id":id})
+ for c in Frontier.BUSHES:
+  if visible_world.has_point(Vector2(c*TILE)): objects.append({"y":(c.y+1)*TILE,"kind":"bush","cell":c})
  objects.append({"y": player.y, "kind": "player", "cell": Vector2i.ZERO})
  objects.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.y < b.y)
  for item in objects:
@@ -447,8 +505,22 @@ func _draw() -> void:
   if effects.active() and effects.progress()>0.45 and item.cell==effects.target and item.kind in ["tree","rock"]:
    p.x+=round(sin(effects.progress()*40)*2*(1.0-effects.progress()))
   match item.kind:
-   "tree": draw_texture(textures.tree, p + Vector2(-20 + round(sin(elapsed * 1.5 + p.x) * 0.6), -52))
-   "rock": draw_texture(textures.rock, p + Vector2(-4, -4))
+   "tree":
+    var pine: bool=Frontier.region(item.cell)!="farm"
+    draw_texture(textures.pine if pine else textures.tree,p+Vector2(-12 if pine else -20,-52)+Vector2(round(sin(elapsed*1.5+p.x)*0.6),0))
+   "rock":
+    draw_texture(textures.rock,p+Vector2(-4,-4))
+    if Frontier.region(item.cell)=="ridge":
+     draw_line(p+Vector2(8,10),p+Vector2(13,6),Color("d0a06f"),2)
+     draw_line(p+Vector2(17,12),p+Vector2(21,17),Color("a37d59"),2)
+   "bush": draw_texture_rect_region(textures.bush,Rect2(p+Vector2(0,-4),Vector2(24,28)),Rect2(0 if frontier.berry_ready(item.cell,day) else 24,0,24,28))
+   "npc":
+    var npc: Dictionary=Frontier.NPCS[item.id]
+    var frame:=int(elapsed*0.6+npc.portrait)%4
+    draw_texture_rect_region(textures.npc,Rect2(p+Vector2(0,-8),Vector2(24,32)),Rect2(frame*24,npc.portrait*32,24,32))
+    var ready: bool=frontier.can_complete(item.id,bag)
+    draw_circle(p+Vector2(12,-14+sin(elapsed*2)),6,Color("d8bd76") if ready else Color("f0dfb7"))
+    draw_string(font,p+Vector2(9,-10+sin(elapsed*2)),"!" if ready else "…",HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("365747"))
    "house": draw_texture(textures.house, p + Vector2(0, -16))
    "shed": draw_texture(textures.shed, p + Vector2(0, -24))
    "workshop":
@@ -467,12 +539,14 @@ func _draw() -> void:
     draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28)+effects.body_offset(), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32))
     effects.draw_tool(self,player.round())
  Landscape.draw_ambient(self,elapsed,minutes)
- if not modal.visible:
+ _draw_fishing()
+ _draw_weather()
+ if not modal.visible and not fishing.active:
   var target := hovered
   var near := Vector2(target * TILE + Vector2i(12, 12)).distance_to(player) <= TILE * 2.25
   if _in_world(target) and (near or building_mode):
    var size := Vector2(72, 48) if building_mode else Vector2(24, 24)
-   var valid := _build_valid(target) and near and _can_afford_build() if building_mode else not water.has(target)
+   var valid := _build_valid(target) and near and _can_afford_build() if building_mode else (water.has(target) and energy>=4 if selected==7 else not water.has(target))
    var color := Color(0.9, 0.87, 0.66, 0.8) if valid else Color(0.88, 0.42, 0.36, 0.8)
    if building_mode:
     var texture: Texture2D=textures.workshop if build_kind=="workshop" else textures.shed
@@ -527,6 +601,7 @@ func _sync_hotbar() -> void:
  building_mode=false
  temporary_item=""
  var id: String=hotbar.slots[hotbar.active]
+ fishing.cancel()
  selected=Items.ACTIONS.find(id)
  if id=="": selected=0
  if is_instance_valid(hud): hud.refresh()
@@ -546,12 +621,13 @@ func _equip(id: String) -> void:
   _sync_hotbar()
  else:
   temporary_item=id
-  selected=Items.ACTIONS.find(id)
+  fishing.cancel()
+ selected=Items.ACTIONS.find(id)
  if is_instance_valid(hud): hud.refresh()
 
 func _save_game() -> bool:
  inventory_layout.reconcile(bag)
- var data := {"version": SAVE_VERSION, "orders":orders.state(), "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
+ var data := {"version": SAVE_VERSION, "muted":muted, "orders":orders.state(), "frontier":frontier.state(), "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
  for c in plots: data.plots.append([c.x, c.y, plots[c].stage, plots[c].wet, plots[c].get("crop","turnip")])
  for c in resources: data.resources.append([c.x, c.y, resources[c].kind, resources[c].hp])
  for c in buildings: data.buildings.append([c.x, c.y])
@@ -588,6 +664,7 @@ func _load_game() -> bool:
  building_mode=false
  selected=Items.ACTIONS.find(str(hotbar.slots[hotbar.active]))
  if hotbar.slots[hotbar.active]=="": selected=0
+ muted=bool(data.get("muted",false))
  day = int(data.day)
  minutes = float(data.minutes)
  energy = int(data.energy)
@@ -596,6 +673,8 @@ func _load_game() -> bool:
  inventory_layout=InventoryLayout.new()
  inventory_layout.restore(data.get("inventory_layout",inventory_layout.slots))
  inventory_layout.reconcile(bag)
+ frontier.restore(data.get("frontier",{}),day)
+ fishing.cancel()
  orders.restore(data.get("orders",{}))
  progression.restore(data.get("progression", {}))
  workshop = Vector2i(-1, -1)
@@ -609,14 +688,18 @@ func _load_game() -> bool:
  for row in data.resources: resources[Vector2i(int(row[0]), int(row[1]))] = {"kind": row[2], "hp": int(row[3])}
  buildings.clear()
  for row in data.buildings: buildings.append(Vector2i(int(row[0]), int(row[1])))
+ if not data.has("frontier"): _seed_frontier_resources()
  if not _can_stand(player): player = Vector2(19 * TILE, 17 * TILE)
  return true
 
 func _valid_save(data: Variant) -> bool:
  if not data is Dictionary: return false
+ if data.has("muted") and not data.muted is bool: return false
  for key in ["version", "player", "day", "minutes", "energy", "coins", "bag", "quest", "plots", "resources", "buildings"]:
   if not data.has(key): return false
  if (data.version!=1 and data.version!=SAVE_VERSION) or not data.bag is Dictionary: return false
+ if not Frontier.integer(data.day,1,10000000): return false
+ if not frontier.valid(data.get("frontier",{}),int(data.day)): return false
  if not orders.valid(data.get("orders",{})): return false
  if not progression.valid_state(data.get("progression", {})): return false
  if not _valid_workshop(data): return false
@@ -625,12 +708,12 @@ func _valid_save(data: Variant) -> bool:
   if not data.stored is Dictionary: return false
   for key in stored:
    if not data.stored.has(key):
-    if key in ["planks", "crate", "carrot_seeds", "carrot"]: continue
+    if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot"]: continue
     return false
    if not _number(data.stored[key]) or data.stored[key] < 0 or data.stored[key] > 10000000: return false
  for key in bag:
   if not data.bag.has(key):
-   if key in ["planks", "crate", "carrot_seeds", "carrot"]: continue
+   if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot"]: continue
    return false
   if not _number(data.bag[key]) or data.bag[key] < 0 or data.bag[key] > 10000000: return false
  for key in ["day", "minutes", "energy", "coins", "quest"]:
@@ -639,7 +722,8 @@ func _valid_save(data: Variant) -> bool:
  if data.day < 1 or data.minutes < 360 or data.minutes >= 1320 or data.energy < 0 or data.energy > 100 or data.coins < 0: return false
  if not data.player is Array or data.player.size() != 2: return false
  for n in data.player:
-  if not _number(n) or n < 0 or n > 1200: return false
+  if not _number(n) or n<0: return false
+ if data.player[0]>=WORLD.x*TILE or data.player[1]>=WORLD.y*TILE: return false
  for key in ["plots", "resources", "buildings"]:
   if not data[key] is Array or data[key].size() > WORLD.x * WORLD.y: return false
   var seen := {}
@@ -773,6 +857,7 @@ func _self_test() -> void:
  load("res://tests/progression_test.gd").new().run(self)
  load("res://tests/hotbar_test.gd").new().run(self)
  load("res://tests/expansion_test.gd").new().run(self)
+ load("res://tests/frontier_test.gd").new().run(self)
  DirAccess.remove_absolute(save_path)
  print("ALL INTEGRATION CHECKS PASSED" if test_failures == 0 else "%d CHECKS FAILED" % test_failures)
  get_tree().quit(0 if test_failures == 0 else 1)
@@ -869,7 +954,7 @@ func _production_status() -> String:
  if not progression.jobs.is_empty():
   var job: Dictionary = progression.jobs[0]
   status = "%s · ещё %d мин. · в очереди %d / 3" % [Progression.RECIPES[job.recipe].name, ceili(job.remaining), progression.jobs.size()]
- return status + "\nГотово: %d досок, %d ящиков" % [progression.products.planks, progression.products.crate]
+ return status + "\nГотово: %d досок, %d ящиков, %d слитков" % [progression.products.planks, progression.products.crate, progression.products.ingot]
 
 func _start_recipe(id: String) -> bool:
  if workshop == Vector2i(-1, -1) or not progression.start_recipe(id, bag):
@@ -924,7 +1009,7 @@ func _valid_workshop(data: Dictionary) -> bool:
  var value: Variant = data.get("workshop")
  if value == null:
   var state: Dictionary = data.get("progression", {})
-  return state.get("jobs", []).is_empty() and state.get("products", {}).get("planks", 0) == 0 and state.get("products", {}).get("crate", 0) == 0
+  return state.get("jobs", []).is_empty() and state.get("products", {}).get("planks", 0) == 0 and state.get("products", {}).get("crate", 0) == 0 and state.get("products", {}).get("ingot",0)==0
  if not value is Array or value.size() != 2: return false
  for n in value:
   if not _number(n) or float(n) != floorf(float(n)): return false
@@ -984,3 +1069,93 @@ func _submit_order() -> bool:
  _orders_menu()
  _notify("Заказ выполнен! +%d монет и +%d опыта"%[reward.coins,reward.xp])
  return true
+
+func _seed_frontier_resources() -> void:
+ var rng:=RandomNumberGenerator.new()
+ rng.seed=74819
+ for y in range(3,WORLD.y-3):
+  for x in range(3,WORLD.x-3):
+   var c:=Vector2i(x,y)
+   if not Frontier.is_frontier(c): continue
+   var chance:=rng.randf()
+   if chance>0.16 or water.has(c) or Landscape.is_path(c) or Frontier.reserved(c): continue
+   if _solid(c) or plots.has(c) or Vector2(c*TILE+Vector2i(12,12)).distance_to(player)<40: continue
+   resources[c]={"kind":"rock" if Frontier.region(c)=="ridge" or chance<0.03 else "tree","hp":3}
+
+func _cast_fish(c: Vector2i) -> bool:
+ if not water.has(c): _notify("Выберите воду рядом с берегом"); return false
+ if energy<4: _notify("Для рыбалки нужно 4 энергии"); return false
+ energy-=4
+ building_mode=false
+ fishing.cast(c,day+frontier.catches)
+ facing=(Vector2(c*TILE+Vector2i(12,12))-player).normalized()
+ direction=(3 if facing.x>0 else 2) if absf(facing.x)>absf(facing.y) else (0 if facing.y>0 else 1)
+ _notify("Поплавок в воде. Дождитесь зелёной полосы!")
+ return true
+
+func _reel_fish() -> bool:
+ if not fishing.active: return false
+ var caught: bool=fishing.reel()
+ if caught:
+  bag.fish+=1
+  frontier.catches+=1
+  _gain_xp(6)
+  _burst(fishing.target,Color("9dcfd1"))
+  _play("pick")
+  _notify("Рыба поймана! +1 рыба · прилавок: 45 монет")
+ else: _notify("Слишком рано. Попробуйте ещё раз и дождитесь зелёной полосы.")
+ _save_game()
+ return caught
+
+func _eat_berry() -> bool:
+ if bag.berry<=0: _notify("Сначала соберите ягоды в лесу"); return false
+ if energy>=100: _notify("Энергия уже полная"); return false
+ bag.berry-=1
+ energy=mini(100,energy+8)
+ _play("pick")
+ _notify("Лесная ягода · +8 энергии")
+ _save_game()
+ return true
+
+func _complete_villager(id: String) -> bool:
+ if not Frontier.NPCS.has(id): return false
+ if player.distance_to(Vector2(Frontier.NPCS[id].cell*TILE+Vector2i(12,12)))>TILE*2.25:
+  _notify("Подойдите к жителю, чтобы передать припасы"); return false
+ var reward: Dictionary=frontier.complete(id,bag)
+ if reward.is_empty(): return false
+ coins+=int(reward.coins)
+ _gain_xp(int(reward.xp))
+ _play("pick")
+ _save_game()
+ hud.show_villager(id)
+ _notify("Поручение выполнено! +%d монет · +%d опыта"%[reward.coins,reward.xp])
+ return true
+
+func _draw_fishing() -> void:
+ if not fishing.active: return
+ var start:=player+Vector2(0,-17)
+ var bobber:=Vector2(fishing.target*TILE)+Vector2(12,11+round(sin(elapsed*5)))
+ var cast:=clampf(fishing.elapsed/0.4,0,1)
+ bobber=start.lerp(bobber,cast)+Vector2(0,-sin(cast*PI)*18)
+ var tip:=start+facing*19+Vector2(0,-9)
+ draw_line(start,tip,Color("c29c64"),2)
+ draw_line(tip,bobber,Color("e1e2bd"),1)
+ draw_arc(bobber+Vector2(0,3),5+sin(elapsed*3),0,TAU,16,Color(0.7,0.85,0.83,0.5),1)
+ draw_rect(Rect2(bobber-Vector2(1,3),Vector2(3,5)),Color("e7d9b6"))
+ draw_rect(Rect2(bobber-Vector2(1,3),Vector2(3,2)),Color("c57e60"))
+ if fishing.ready(): draw_string(font,bobber+Vector2(-2,-9),"!",HORIZONTAL_ALIGNMENT_LEFT,-1,12,Color("f4dc8c"))
+
+func _draw_weather() -> void:
+ if not Frontier.rainy(day): return
+ var center:=camera.get_screen_center_position()
+ for i in range(75):
+  var x:=fposmod(i*97.0+elapsed*25,760)-380
+  var y:=fposmod(i*61.0+elapsed*240,440)-220
+  var at:=center+Vector2(x,y)
+  draw_line(at,at+Vector2(-2,6),Color(0.73,0.86,0.83,0.32),1)
+
+func _toggle_sound() -> void:
+ muted=not muted
+ _save_game()
+ if modal.visible and hud.view=="help": hud.show_help()
+ _notify("Звук выключен" if muted else "Звук включён")

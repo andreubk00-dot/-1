@@ -34,7 +34,7 @@ assert '$GODOT_' not in html
 (stage/(base+'.html')).unlink()
 assert (stage/(base+'.wasm')).stat().st_size>1000000
 assert (stage/(base+'.pck')).is_file()
-(stage/'release.json').write_text(json.dumps({'version':'0.4.0','revision':revision},indent=2))
+(stage/'release.json').write_text(json.dumps({'version':'0.9.0-rc.1','revision':revision},indent=2))
 root=Path('build/web')
 if root.exists():shutil.rmtree(root)
 shutil.copytree(stage,root)

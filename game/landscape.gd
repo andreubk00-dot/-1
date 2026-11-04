@@ -1,6 +1,7 @@
 extends RefCounted
+const Frontier=preload("res://game/frontier.gd")
 static func is_path(c: Vector2i) -> bool:
- return ((c.y in [12,13]) and c.x>=6 and c.x<=33) or ((c.x in [22,23]) and c.y>=14 and c.y<=31) or Rect2i(9,10,3,2).has_point(c) or Rect2i(27,11,3,1).has_point(c)
+ return Frontier.is_path(c) or ((c.y in [12,13]) and c.x>=6 and c.x<=33) or ((c.x in [22,23]) and c.y>=14 and c.y<=31) or Rect2i(9,10,3,2).has_point(c) or Rect2i(27,11,3,1).has_point(c)
 static func draw_ambient(game: Node2D, elapsed: float, minutes: float) -> void:
  if minutes<1080:
   for i in range(6):

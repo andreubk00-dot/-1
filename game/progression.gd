@@ -7,7 +7,8 @@ const BUILDINGS := {
 }
 const RECIPES := {
  "planks": {"name": "Доски", "cost": {"wood": 4}, "output": "planks", "count": 2, "minutes": 30.0},
- "crate": {"name": "Ящик урожая", "cost": {"planks": 2, "turnip": 1}, "output": "crate", "count": 1, "minutes": 60.0}
+ "crate": {"name": "Ящик урожая", "cost": {"planks": 2, "turnip": 1}, "output": "crate", "count": 1, "minutes": 60.0},
+ "ingot": {"name":"Медный слиток", "cost":{"ore":3,"wood":1}, "output":"ingot", "count":1, "minutes":45.0}
 }
 const UPGRADES := {
  2: {"coins": 100, "planks": 4, "stone": 5},
@@ -16,7 +17,7 @@ const UPGRADES := {
 const MAX_QUEUE := 3
 var tool_level := 1
 var jobs: Array[Dictionary] = []
-var products := {"planks": 0, "crate": 0}
+var products := {"planks": 0, "crate": 0, "ingot":0}
 var crates_sold := 0
 
 func start_recipe(id: String, inventory: Dictionary) -> bool:
@@ -52,7 +53,7 @@ func collect(inventory: Dictionary) -> int:
  return count
 
 func has_products() -> bool:
- return products.planks > 0 or products.crate > 0
+ return products.planks > 0 or products.crate > 0 or products.ingot>0
 
 func can_upgrade(inventory: Dictionary, coins: int) -> bool:
  if not UPGRADES.has(tool_level + 1): return false
@@ -84,6 +85,7 @@ func valid_state(value: Variant) -> bool:
   if not is_finite(float(job.remaining)) or job.remaining <= 0 or job.remaining > RECIPES[job.recipe].minutes: return false
  if not value.products is Dictionary: return false
  for key in products:
+  if key=="ingot" and not value.products.has(key): continue
   if not value.products.has(key) or not _integer(value.products[key], 0, 10000000): return false
  return true
 
@@ -91,13 +93,13 @@ func restore(value: Variant) -> bool:
  if not valid_state(value): return false
  tool_level = 1
  jobs.clear()
- products = {"planks": 0, "crate": 0}
+ products = {"planks": 0, "crate": 0, "ingot":0}
  crates_sold = 0
  if value.is_empty(): return true
  tool_level = int(value.tool_level)
  crates_sold = int(value.crates_sold)
  for job in value.jobs: jobs.append({"recipe": job.recipe, "remaining": float(job.remaining)})
- for key in products: products[key] = int(value.products[key])
+ for key in products: products[key] = int(value.products.get(key,0))
  return true
 
 func _integer(value: Variant, minimum: int, maximum: int) -> bool:
