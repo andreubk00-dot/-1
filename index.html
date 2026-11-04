@@ -8,8 +8,8 @@
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#142c29;color:#f1e6c9;font-family:Arial,sans-serif;overscroll-behavior:none;user-select:none;-webkit-user-select:none}body{display:grid;place-items:center}#stage{position:relative;width:min(100vw,177.7778vh);height:min(100vh,56.25vw)}canvas{display:block;width:100%;height:100%;outline:none;touch-action:none;image-rendering:pixelated}.veil{position:fixed;inset:0;z-index:4;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#3f5d49,#172f2c)}[hidden]{display:none!important}.card{width:min(90vw,480px);padding:38px;border:1px solid #a8a574;border-radius:12px;background:#263f3dee;box-shadow:0 24px 80px #0b211a88;text-align:center}.eyebrow{font-size:11px;letter-spacing:3px;color:#bbceaa}h1{font-size:clamp(28px,5vw,42px);font-weight:500;margin:14px 0}p{font-size:15px;line-height:1.6;color:#c6d1b6}button{font:inherit;color:#f1e6c9;border:1px solid #b8ad7c;border-radius:7px;background:#596e4e;padding:13px 24px;cursor:pointer;touch-action:none}button:hover,button:focus-visible{background:#71835a;outline:2px solid #e4cd91;outline-offset:3px}progress{width:100%;accent-color:#b9c68c;height:8px;margin:20px 0}.small{font-size:12px;color:#aebfa6}#touch{display:none;position:absolute;inset:0;pointer-events:none}#touch button{position:absolute;pointer-events:auto;width:42px;height:42px;padding:0;background:#263f3dbb;border-color:#c7c29499;font-size:22px}#up{left:48px;bottom:124px}#left{left:4px;bottom:80px}#down{left:48px;bottom:80px}#right{left:92px;bottom:80px}#touch #action{right:12px;bottom:98px;width:54px;height:54px;font-size:14px;border-radius:50%}#portrait{display:none;position:fixed;top:8px;color:#c6d1b6;font-size:12px} @media(pointer:coarse){#touch{display:block}}@media(orientation:portrait) and (pointer:coarse){#portrait{display:block}}
 </style>
-<link id="-gd-engine-icon" rel="icon" type="image/png" href="game-0139c48dbd17.icon.png" />
-<link rel="apple-touch-icon" href="game-0139c48dbd17.apple-touch-icon.png"/>
+<link id="-gd-engine-icon" rel="icon" type="image/png" href="game-54c3c92d0d9a.icon.png" />
+<link rel="apple-touch-icon" href="game-54c3c92d0d9a.apple-touch-icon.png"/>
 
 </head>
 <body>
@@ -21,12 +21,12 @@
 </div>
 <div id="portrait">Для удобства поверните устройство горизонтально</div>
 <div id="loading" class="veil"><div class="card"><div class="eyebrow">УСАДЬБА У СТАРОГО ПРУДА</div><h1>Тихая долина</h1><p id="status">Загружаем вашу долину…</p><progress id="progress" max="100" value="0"></progress><button id="retry" hidden onclick="location.reload()">Попробовать снова</button><p class="small">Первый запуск может занять немного времени</p></div></div>
-<div id="welcome" class="veil" hidden><div class="card"><div class="eyebrow">ВСЁ ПОД РУКОЙ · 0.3</div><h1>Тихая долина</h1><p>Выращивайте урожай, обустраивайте ферму<br>и возвращайте жизнь старой усадьбе.</p><button id="play">Войти в долину</button><p class="small">WASD — движение · I — инвентарь · B — постройки<br>Свободный хотбар: перетащите предмет в любую ячейку.<br>На телефоне используйте экранные стрелки.</p></div></div>
-<script src="platform-0139c48dbd17.js"></script>
-<script src="game-0139c48dbd17.js"></script>
+<div id="welcome" class="veil" hidden><div class="card"><div class="eyebrow">РАСТУЩАЯ ДОЛИНА · 0.4</div><h1>Тихая долина</h1><p>Выращивайте урожай, обустраивайте ферму<br>и возвращайте жизнь старой усадьбе.</p><button id="play">Войти в долину</button><p class="small">WASD — движение · I — инвентарь · B — постройки · J — заказы<br>Свободный хотбар: перетащите предмет в любую ячейку.<br>На телефоне используйте экранные стрелки.</p></div></div>
+<script src="platform-54c3c92d0d9a.js"></script>
+<script src="game-54c3c92d0d9a.js"></script>
 <script>
 'use strict';
-const config = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game-0139c48dbd17","experimentalVK":false,"fileSizes":{"game-0139c48dbd17.pck":584820,"game-0139c48dbd17.wasm":37700666},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const config = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game-54c3c92d0d9a","experimentalVK":false,"fileSizes":{"game-54c3c92d0d9a.pck":611692,"game-54c3c92d0d9a.wasm":37700666},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const engine = new Engine(config);
 window.ValleyEngine = engine;
 (async () => {
