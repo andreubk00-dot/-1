@@ -6,7 +6,7 @@ func run(game: Node2D) -> void:
  var model=Frontier.new()
  var bag: Dictionary={"berry":0,"fish":3,"ingot":3}
  var bush: Vector2i=Frontier.BUSHES[0]
- game._check(game.WORLD==Vector2i(80,56),"expanded world has 4480 cells without moving original landmarks")
+ game._check(game.WORLD==Vector2i(96,64),"expanded world has 6144 cells without moving original landmarks")
  game._check(Frontier.region(Vector2i(19,14))=="farm" and Frontier.region(Vector2i(50,10))=="forest" and Frontier.region(Vector2i(64,25))=="lake" and Frontier.region(Vector2i(57,40))=="ridge","four regions map to their actual landmarks")
  game._check(model.gather(bush,1,bag) and bag.berry==2,"ready berry bush awards two berries")
  game._check(not model.gather(bush,1,bag) and not model.gather(bush,2,bag) and bag.berry==2,"picked bush cannot duplicate berries before cooldown")

@@ -1,5 +1,6 @@
 extends RefCounted
 const SPECS := {
+ "wheat":{"name":"Пшеница","seed":"wheat_seeds","days":2,"price":12,"pack":25,"row":2,"xp":4,"yield":2},
  "turnip": {"name":"Репа", "seed":"seeds", "days":3, "price":35, "pack":20, "row":0, "xp":5},
  "carrot": {"name":"Морковь", "seed":"carrot_seeds", "days":4, "price":55, "pack":30, "row":1, "xp":8}
 }

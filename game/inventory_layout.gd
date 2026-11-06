@@ -1,21 +1,21 @@
 extends RefCounted
 const Items = preload("res://game/items.gd")
-const SIZE := 24
-const TOOLS := ["hand","hoe","water","axe","pick","rod"]
+const SIZE := 36
+const TOOLS := ["hand","hoe","water","axe","pick","rod","sword","sling"]
 var slots: Array = []
 func _init() -> void:
  slots.resize(SIZE)
  slots.fill("")
- for i in range(TOOLS.size()-1): slots[i]=TOOLS[i]
+ for i in range(5): slots[i]=TOOLS[i]
 func reconcile(inventory: Dictionary) -> void:
  for i in range(SIZE):
   var id: String=slots[i]
   if id!="" and not TOOLS.has(id) and int(inventory.get(id,0))<=0: slots[i]=""
  for id in TOOLS:
-  if id!="rod": _ensure(id)
+  if id not in ["rod","sword","sling"]: _ensure(id)
  for id in inventory:
   if int(inventory[id])>0 and Items.NAMES.has(id): _ensure(id)
- _ensure("rod")
+ for id in ["rod","sword","sling"]: _ensure(id)
 func _ensure(id: String) -> void:
  if slots.has(id): return
  var index:=slots.find("")
@@ -27,10 +27,11 @@ func swap(a: int,b: int) -> bool:
  slots[b]=item
  return true
 func restore(value: Variant) -> bool:
- if not value is Array or value.size()!=SIZE: return false
+ if not value is Array or value.size() not in [24,SIZE]: return false
  var migrated: Array=value.duplicate()
  for i in range(migrated.size()):
   if migrated[i]=="build": migrated[i]=""
+ while migrated.size()<SIZE: migrated.append("")
  var seen: Dictionary={}
  for id in migrated:
   if not id is String or (id!="" and (not Items.NAMES.has(id) or seen.has(id))): return false

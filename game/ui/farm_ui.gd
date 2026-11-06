@@ -13,6 +13,8 @@ var header_subtitle: Label
 var header_icon: TextureRect
 var window_tabs: HBoxContainer
 var slots: Array[Button] = []
+var health_label: Label
+var health_bar: ProgressBar
 var money: Label
 var day_label: Label
 var time_label: Label
@@ -175,6 +177,14 @@ func _build_hud() -> void:
  money=label("",16,"f0d494")
  wallet_row.add_child(money)
  wallet.add_child(wallet_row)
+ var vitality:=panel(root,Vector2(256,69),Vector2(124,49))
+ var vitality_column:=VBoxContainer.new()
+ vitality_column.add_theme_constant_override("separation",3)
+ vitality.add_child(vitality_column)
+ health_label=label("",12,"e4bd9c")
+ vitality_column.add_child(health_label)
+ health_bar=_bar("bc8064",5)
+ vitality_column.add_child(health_bar)
  var date := panel(root,Vector2(742,18),Vector2(200,94))
  var date_row := HBoxContainer.new()
  date_row.add_theme_constant_override("separation",10)
@@ -396,8 +406,8 @@ func row_card(id: String, title: String, description: String) -> VBoxContainer:
 func cost_text(cost: Dictionary) -> String:
  var parts:=PackedStringArray()
  for id in cost:
-  if id not in ["wood","stone","coins","planks"]: continue
-  if int(cost[id])>0: parts.append(str(cost[id])+" "+{"wood":"дерева","stone":"камня","coins":"монет","planks":"досок"}.get(id,id))
+  if id not in ["wood","stone","coins","planks","ingot"]: continue
+  if int(cost[id])>0: parts.append(str(cost[id])+" "+{"wood":"дерева","stone":"камня","coins":"монет","planks":"досок","ingot":"медных слитков"}.get(id,id))
  return " · ".join(parts)
 
 func show_inventory() -> void:
@@ -413,7 +423,11 @@ func show_inventory() -> void:
  inventory_grid.columns=6
  inventory_grid.add_theme_constant_override("h_separation",6)
  inventory_grid.add_theme_constant_override("v_separation",6)
- left.add_child(inventory_grid)
+ var inventory_scroll:=ScrollContainer.new()
+ inventory_scroll.custom_minimum_size=Vector2(380,236)
+ inventory_scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
+ inventory_scroll.add_child(inventory_grid)
+ left.add_child(inventory_scroll)
  rebuild_inventory()
  inspection=VBoxContainer.new()
  inspection.custom_minimum_size.x=290
@@ -438,7 +452,8 @@ func inspect_item(id: String) -> void:
  inspection.add_child(desc)
  var quantity: String="Постоянный инструмент" if id!="" else ""
  if game.bag.has(id): quantity="В рюкзаке: %d"%game.bag[id]
- if id in ["axe","pick","hoe","water"]: quantity="Уровень инструментов: %d / 3"%game.progression.tool_level
+ if id in ["sword","sling"]: quantity="Оружие: %d / 3 · улучшение в кузнице"%game.combat.weapon_level
+ if id in ["axe","pick","hoe","water"]: quantity="Уровень инструментов: %d / 4"%game.progression.tool_level
  inspection.add_child(label(quantity,12))
  inspection.add_child(button("Назначить на панель",func() -> void:
   pending_item=id
@@ -473,7 +488,7 @@ func show_catalog() -> void:
   var kind: String=id
   var cost: Dictionary=game.Progression.BUILDINGS[id]
   var column:=row_card(id,cost.name,"3 × 2 клетки · "+cost_text(cost))
-  var enabled: bool=not (id=="workshop" and game.workshop!=Vector2i(-1,-1))
+  var enabled: bool=not (id=="workshop" and game.workshop!=Vector2i(-1,-1)) and not game.homestead.has(id)
   var text: String="Построить" if enabled else "Уже построено"
   column.add_child(button(text,func() -> void:
    game._begin_build(kind),"hammer",enabled,"build_"+id))
@@ -481,7 +496,7 @@ func show_catalog() -> void:
 
 func show_home() -> void:
  open_window("Дом, милый дом","ТИШИНА ВЕЧЕРА     /     ОТДЫХ И НОВЫЙ ДЕНЬ","house","home")
- var column:=row_card("moon","До нового рассвета","Энергия полностью восстановится. Политые растения подрастут, а мастерская завершит ночные заказы.")
+ var column:=row_card("moon","До нового рассвета","Здоровье и энергия полностью восстановятся. Политые растения подрастут, а мастерская завершит ночные заказы.")
  column.add_child(button("Отдохнуть до утра",game._sleep,"moon",true,"sleep"))
  modal_body.add_child(label("Растения растут после полива. Сухая грядка не потеряет урожай, но её рост остановится.",12,"68775d"))
 
@@ -496,9 +511,11 @@ func show_shop() -> void:
   b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
   offers.add_child(b)
  seeds.add_child(offers)
- var earned: int=game.bag.turnip*35+game.bag.carrot*55+game.bag.crate*120+game.bag.fish*45
- var produce:=row_card("crate","Ваш урожай","Репа: %d × 35 · Морковь: %d × 55 · Ящики: %d × 120 · Рыба: %d × 45"%[game.bag.turnip,game.bag.carrot,game.bag.crate,game.bag.fish])
+ var earned: int=game.bag.turnip*35+game.bag.carrot*55+game.bag.crate*120+game.bag.fish*45+game.bag.wheat*12
+ var produce:=row_card("crate","Ваш урожай","Репа: %d · Морковь: %d · Ящики: %d · Рыба: %d · Пшеница: %d"%[game.bag.turnip,game.bag.carrot,game.bag.crate,game.bag.fish,game.bag.wheat])
  produce.add_child(button("Продать всё · %d монет"%earned,game._sell,"coin",earned>0,"sell"))
+
+ modal_body.add_child(button("Купить 5 семян пшеницы · 25 монет",func() -> void: game._buy_seeds("wheat_seeds"),"wheat_seeds",game.coins>=25,"buy_wheat_seeds"))
 
 func show_workshop() -> void:
  open_window("Мастерская","РЕМЕСЛО И ПРОИЗВОДСТВО     /     ЗАКАЗЫ ИДУТ ВО ВРЕМЯ ИГРЫ И СНА","workshop","workshop")
@@ -535,7 +552,7 @@ func show_workshop() -> void:
  modal_body.add_child(button("Забрать готовое · %d досок, %d ящиков, %d слитков"%[game.progression.products.planks,game.progression.products.crate,game.progression.products.ingot],game._collect_products,"crate",game.progression.has_products(),"collect"))
 
 func show_upgrade() -> void:
- open_window("Инструменты мастера","ПРОЧНОСТЬ И ЭФФЕКТИВНОСТЬ     /     ТЕКУЩИЙ УРОВЕНЬ %d / 3"%game.progression.tool_level,"axe","upgrade")
+ open_window("Инструменты мастера","УРОВЕНЬ %d     /     II–III В МАСТЕРСКОЙ · IV В КУЗНИЦЕ"%game.progression.tool_level,"axe","upgrade")
  var top:=HBoxContainer.new()
  top.add_child(icon("axe",56))
  top.add_child(icon("pick",56))
@@ -543,7 +560,7 @@ func show_upgrade() -> void:
  top.add_child(icon("water",56))
  modal_body.add_child(top)
  if game.progression.tool_level>=3:
-  modal_body.add_child(label("Ваши инструменты достигли максимального уровня.",17))
+  modal_body.add_child(label("Инструменты III готовы к работе. Уровень IV доступен в кузнице за 5 железных слитков и 300 монет.",17))
  else:
   var cost: Dictionary=game.Progression.UPGRADES[game.progression.tool_level+1]
   var column:=row_card("star","Уровень %d → %d"%[game.progression.tool_level,game.progression.tool_level+1],cost_text(cost))
@@ -577,11 +594,16 @@ func show_help() -> void:
  row_card("bag","Всё под рукой","I или Tab — инвентарь. Перетащите инструменты и предметы в любые ячейки хотбара. 1–9 и 0 выбирают ячейку; колесо — соседнюю. ПКМ очищает ячейку.")
  row_card("map","Большая долина","G — карта и поручения жителей. В лесу собирайте ягоды рукой: их можно съесть из хотбара. Назначьте удочку из рюкзака: нажмите на воду рядом, затем E на зелёной полосе. Рыбу можно продать у прилавка.")
  row_card("rain","Погода и ресурсы","Раз в шесть дней приходит дождь и поливает посаженные культуры. Дикие деревья и камни новых районов восстанавливаются каждые три дня; постройки и грядки защищены. В кряже добывается медная руда для мастерской.")
+ row_card("shield","Дикие руины","На востоке долины появились моховики, осколочники и корневой страж. Назначьте клинок или пращу из рюкзака: ЛКМ или E — атака. Для пращи нужен камень. Во время красного замаха отходите в сторону. Усадьба безопасна.")
+ row_card("bakery","Ферма для больших походов","Пшеница растёт за 2 политых дня и даёт 2 зерна. Пекарня готовит хлеб: +35 здоровья и +25 энергии. Колодец-дождеватель автоматически поливает растения в радиусе 4 клеток при смене дня.")
+ row_card("forge","Железо и оружие","В руинах из камней и врагов добывается железо, из врагов — эссенция. Кузница плавит железные слитки, улучшает оружие до III и инструменты до IV. За поражение теряется 10% монет, максимум 100; инвентарь сохраняется.")
  row_card("build","Развивайте хозяйство","B — отдельная вкладка построек, J — заказы. В мастерской делайте доски и ящики урожая, улучшайте инструменты. WASD — движение, ЛКМ — работа рядом, E — перед собой. F5 — сохранить, M — звук, Esc — закрыть окно.")
 
 func refresh() -> void:
  game.inventory_layout.reconcile(game.bag)
  money.text=str(game.coins)
+ health_label.text="Здоровье %d"%game.combat.health
+ health_bar.value=game.combat.health
  energy_label.text="Энергия %d / 100"%game.energy
  energy_bar.value=game.energy
  level_label.text="УР. %d"%(1+game.experience/25)
@@ -606,10 +628,16 @@ func refresh() -> void:
   elif game.progression.tool_level==1: text="Изготовьте доски и улучшите инструменты"
   elif game.progression.crates_sold==0: text="Продайте первый ящик урожая"
   elif game.orders.completed==0: text="Выполните первый заказ [J]"
-  else: text="Исследуйте долину [G] · Поручения: %d / 3"%game.frontier.completed.size()
+  elif not game.homestead.has("bakery"): text="Постройте пекарню [B] · Хлеб для походов"
+  elif not game.homestead.has("well"): text="Колодец [B] · Полив большого поля"
+  elif not game.homestead.has("forge"): text="Постройте кузницу [B] · Железо из руин"
+  elif game.combat.weapon_level<3: text="Закалите оружие в кузнице · Железо и эссенция"
+  elif not game.combat.killed.has(5): text="Бросьте вызов корневому стражу [G]"
+  else: text="Долина оживает · Заказы, урожай и новые походы"
  goal.text=text
  var held: String=game.temporary_item if game.temporary_item!="" else game.hotbar.slots[game.hotbar.active]
  held_label.text=Items.item_name(held)
+ if held in ["sword","sling"]: held_label.text+=" · ур. %d"%game.combat.weapon_level
  if held in ["axe","pick","hoe","water"]: held_label.text+=" · ур. %d"%game.progression.tool_level
  if game.building_mode:
   var cost: Dictionary=game.Progression.BUILDINGS[game.build_kind]
@@ -662,7 +690,7 @@ func rebuild_inventory() -> void:
  for child in inventory_grid.get_children():
   inventory_grid.remove_child(child)
   child.queue_free()
- for i in range(24):
+ for i in range(game.inventory_layout.SIZE):
   var index: int=i
   var item: String=game.inventory_layout.slots[i]
   var slot=Slot.new()
@@ -712,7 +740,7 @@ func show_orders() -> void:
 
 func show_map() -> void:
  if modal.visible and view=="map": modal.hide(); return
- open_window("Карта большой долины","80 × 56 КЛЕТОК     /     ИССЛЕДУЙТЕ ДОРОГИ НА ВОСТОКЕ","map","map")
+ open_window("Карта большой долины","96 × 64 КЛЕТКИ     /     ИССЛЕДУЙТЕ ДОРОГИ НА ВОСТОКЕ","map","map")
  var map_view:=WorldMap.new()
  map_view.game=game
  modal_body.add_child(map_view)
@@ -758,3 +786,44 @@ func show_smelter() -> void:
  col.add_child(button("В очередь",func() -> void: game._start_recipe("ingot"); show_smelter(),"hammer",game.progression.jobs.size()<3 and game.bag.ore>=3 and game.bag.wood>=1,"recipe_ingot"))
  modal_body.add_child(button("Забрать готовое",func() -> void: game._collect_products(); show_smelter(),"crate",game.progression.has_products(),"collect"))
  modal_body.add_child(button("К производству",show_workshop,"workshop"))
+
+func show_facility(kind: String) -> void:
+ open_window(game.Progression.BUILDINGS[kind].name,"РАЗВИТИЕ ХОЗЯЙСТВА     /     ПРОИЗВОДСТВО И УЛУЧШЕНИЯ",kind,"facility")
+ var status: String="Очередь пуста"
+ if not game.homestead.jobs.is_empty():
+  var job: Dictionary=game.homestead.jobs[0]
+  status="%s · ещё %d мин. · очередь %d / 3"%[game.Homestead.RECIPES[job.recipe].name,ceili(job.remaining),game.homestead.jobs.size()]
+ modal_body.add_child(label(status+"\nГотово: %d хлеба · %d железных слитков"%[game.homestead.products.bread,game.homestead.products.ironbar],12,"68775d"))
+ if kind=="well":
+  row_card("water","Полив без хлопот","При смене дня колодец поливает посаженные культуры в радиусе 4 клеток от центра. Грядки продолжат расти без ручного полива. Пустая земля не превращается в грядки.")
+ else:
+  var id: String="bread" if kind=="bakery" else "ironbar"
+  var spec: Dictionary=game.Homestead.RECIPES[id]
+  var col:=row_card(id,spec.name,"3 пшеницы · 35 игровых минут" if id=="bread" else "3 железной руды + 2 дерева · 60 игровых минут")
+  col.add_child(label("Общая очередь пекарни и кузницы: до 3 заданий. В окнах производство стоит на паузе.",11,"68775d"))
+  col.add_child(button("В очередь",func() -> void: game._start_facility_recipe(id),"hammer",game.homestead.can_start(id,game.bag),"facility_recipe"))
+  modal_body.add_child(button("Забрать готовое",func() -> void: game._collect_facility(kind),"crate",game.homestead.products.bread+game.homestead.products.ironbar>0,"facility_collect"))
+ if kind=="forge":
+  var next: int=game.combat.weapon_level+1
+  if next<=3:
+   var bars:=3 if next==2 else 6
+   var essences:=0 if next==2 else 6
+   var price:=100 if next==2 else 250
+   var col:=row_card("sword","Оружие %d → %d"%[next-1,next],"%d железных слитков · %d эссенции · %d монет. Усиливает клинок и пращу."%[bars,essences,price])
+   col.add_child(button("Закалить оружие",game._upgrade_weapon,"sword",game.bag.ironbar>=bars and game.bag.essence>=essences and game.coins>=price,"weapon_upgrade"))
+  else: row_card("shield","Оружие III","Клинок и праща достигли максимальной силы.")
+  var tools:=row_card("pick","Горные инструменты IV","Нужны инструменты III, 5 железных слитков и 300 монет. Добыча: 12 дерева, 8 камня; больше меди и железа.")
+  tools.add_child(button("Выковать инструменты IV",game._forge_tools,"hammer",game.progression.tool_level==3 and game.bag.ironbar>=5 and game.coins>=300,"forge_tools"))
+ modal_body.add_child(button("Управление зданием",func() -> void: show_facility_management(kind),kind,true,"facility_manage"))
+
+func show_facility_management(kind: String) -> void:
+ open_window("Управление зданием","РАЗБОР И ВОЗВРАТ МАТЕРИАЛОВ",kind,"facility_manage")
+ var col:=row_card(kind,game.Progression.BUILDINGS[kind].name,"Вернётся: "+cost_text(game.Progression.BUILDINGS[kind]))
+ col.add_child(label("Сначала завершите связанные заказы и заберите продукцию.",12,"68775d"))
+ col.add_child(button("Подтвердить разбор",func() -> void: game._dismantle_facility(kind),"hammer",game.homestead.removable(kind),"facility_dismantle"))
+ modal_body.add_child(button("Назад",func() -> void: show_facility(kind),"arrow"))
+
+func show_rescue(lost: int) -> void:
+ open_window("Возвращение домой","ЖИТЕЛИ ДОЛИНЫ ПОМОГЛИ ВАМ ДОБРАТЬСЯ ДО УСАДЬБЫ","health","rescue")
+ row_card("house","Вы в безопасности","Здоровье восстановлено до 60. Потеряно %d монет. Все предметы и снаряжение сохранены. Отдохните дома или съешьте хлеб перед следующим походом."%lost)
+ modal_body.add_child(button("Продолжить",func() -> void: modal.hide(),"check",true,"rescue_continue"))

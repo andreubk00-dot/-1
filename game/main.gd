@@ -11,6 +11,8 @@ const Orders = preload("res://game/orders.gd")
 const Landscape = preload("res://game/landscape.gd")
 const Frontier = preload("res://game/frontier.gd")
 const Fishing = preload("res://game/fishing.gd")
+const Combat=preload("res://game/combat.gd")
+const Homestead=preload("res://game/homestead.gd")
 const TILE := 24
 const WORLD := Frontier.SIZE
 const SAVE_VERSION := 2
@@ -26,6 +28,8 @@ var building_mode := false
 var orders = Orders.new()
 var frontier = Frontier.new()
 var fishing = Fishing.new()
+var combat=Combat.new()
+var homestead=Homestead.new()
 var hotbar = Hotbar.new()
 var inventory_layout = InventoryLayout.new()
 var hud: CanvasLayer
@@ -35,7 +39,7 @@ var day := 1
 var minutes := 360.0
 var energy := 100
 var coins := 80
-var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0}
+var bag := {"wood": 0, "stone": 0, "seeds": 8, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0, "wheat_seeds":0, "wheat":0, "bread":0, "iron":0, "ironbar":0, "essence":0}
 var water: Dictionary = {}
 var resources: Dictionary = {}
 var plots: Dictionary = {}
@@ -55,7 +59,7 @@ var elapsed := 0.0
 var quest_stage := 0
 var experience := 0
 var active_storage := Vector2i(-1, -1)
-var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0}
+var stored := {"wood": 0, "stone": 0, "seeds": 0, "turnip": 0, "planks": 0, "crate": 0, "carrot_seeds":0, "carrot":0, "berry":0, "fish":0, "ore":0, "ingot":0, "wheat_seeds":0, "wheat":0, "bread":0, "iron":0, "ironbar":0, "essence":0}
 var progression = Progression.new()
 var workshop := Vector2i(-1, -1)
 var build_kind := "warehouse"
@@ -79,13 +83,14 @@ func _ready() -> void:
  test_mode = "--self-test" in OS.get_cmdline_user_args()
  if test_mode: save_path = "user://test_farm.json"
  font = load("res://art/ui.ttf")
- for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop", "crops", "pine", "bush", "npc", "portraits", "map"]:
+ for key in ["ground", "tree", "rock", "farmer", "house", "shed", "workshop", "crops", "pine", "bush", "npc", "portraits", "map", "mobs", "ruin", "bakery", "well", "forge"]:
   textures[key] = load("res://art/" + key + ".png")
  for cell in JSON.parse_string(FileAccess.get_file_as_string("res://game/water.json")):
   water[Vector2i(int(cell[0]), int(cell[1]))] = true
  _generate_resources()
  var restored := false
  if not test_mode: restored = _load_game()
+ if not restored: combat.initialize(day)
  camera = Camera2D.new()
  camera.zoom = Vector2(1.5, 1.5)
  camera.position = player
@@ -115,7 +120,7 @@ func _ready() -> void:
  if "--capture" in OS.get_cmdline_user_args(): call_deferred("_capture")
  elif test_mode: call_deferred("_self_test")
  elif not load_warning.is_empty(): _notify(load_warning)
- else: _notify("С возвращением! Ваше хозяйство ждёт." if restored else "Добро пожаловать домой. Начните с первой грядки.")
+ else: _notify("Новые земли ждут! В рюкзаке — клинок и праща. [G] карта · [B] новые постройки" if restored else "Добро пожаловать домой. Начните с первой грядки. [H] помощь")
 
 func _generate_resources() -> void:
  var rng := RandomNumberGenerator.new()
@@ -173,17 +178,19 @@ func _process(delta: float) -> void:
    facing = input.normalized()
    direction = (3 if input.x > 0 else 2) if absf(input.x) > absf(input.y) else (0 if input.y > 0 else 1)
    walk_clock += delta * 9
-   var shift := input.normalized() * 76 * delta
+   var shift := input.normalized() * 76 * delta * (0.7 if combat.attack_left>0 else 1.0)
    if _can_stand(player + Vector2(shift.x, 0)): player.x += shift.x
    if _can_stand(player + Vector2(0, shift.y)): player.y += shift.y
   else: walk_clock = 0
+  combat.step(delta,player,Callable(self,"_can_stand"),Callable(self,"_shot_clear"),day)
+  _combat_events()
   _advance_production(delta * 1.3)
   minutes += delta * 1.3
   if minutes >= 1320: _sleep()
   var region: String=Frontier.region(_cell(player))
   if not frontier.visited.has(region):
    frontier.visited.append(region)
-   _notify("Открыто: "+Frontier.REGIONS[region]+" · [G] карта")
+   _notify("Дикие руины! Выберите клинок или пращу. Следите за замахами врагов." if region=="wilds" else "Открыто: "+Frontier.REGIONS[region]+" · [G] карта")
   if Frontier.rainy(day):
    for plot in plots.values():
     if plot.stage>=0 and plot.stage<int(Crops.spec(plot).days): plot.wet=true
@@ -215,6 +222,7 @@ func _in_world(c: Vector2i) -> bool:
  return c.x >= 1 and c.y >= 1 and c.x < WORLD.x - 1 and c.y < WORLD.y - 1
 
 func _solid(c: Vector2i) -> bool:
+ if homestead.at(c)!="" or Combat.ruin_solid(c): return true
  if Frontier.BUSHES.has(c): return true
  for npc in Frontier.NPCS.values():
   if npc.cell==c: return true
@@ -285,19 +293,21 @@ func _act(c: Vector2i) -> bool:
  var previous_kind := ""
  if resources.has(c): previous_kind=resources[c].kind
  var success := _perform_action(c)
- if success and not modal.visible and not was_building and selected>=0 and selected<=6:
-  effects.start(3 if selected==6 else selected,player,c,previous_kind if not resources.has(c) else "", "carrot_seeds" if selected==6 else "seeds")
+ if success and not modal.visible and not was_building and (selected in [0,1,2,3,4,5,6,9]):
+  effects.start(3 if selected in [6,9] else selected,player,c,previous_kind if not resources.has(c) else "", "wheat_seeds" if selected==9 else "carrot_seeds" if selected==6 else "seeds")
   action_cooldown=maxf(action_cooldown,effects.duration)
   var delta_direction:=Vector2(c*TILE+Vector2i(12,12))-player
   if delta_direction.length_squared()>0: facing=delta_direction.normalized()
   direction=(3 if delta_direction.x>0 else 2) if absf(delta_direction.x)>absf(delta_direction.y) else (0 if delta_direction.y>0 else 1)
+ if success and selected in [10,11]:
+  direction=(3 if facing.x>0 else 2) if absf(facing.x)>absf(facing.y) else (0 if facing.y>0 else 1)
  if success and web_platform != null: _save_game()
  return success
 
 func _perform_action(c: Vector2i) -> bool:
  if action_cooldown > 0 or modal.visible: return false
  action_cooldown = 0.18
- if Vector2(c * TILE + Vector2i(12, 12)).distance_to(player) > TILE * 2.25:
+ if Vector2(c * TILE + Vector2i(12, 12)).distance_to(player) > (180.0 if selected==11 and not building_mode else TILE * 2.25):
   _notify("Подойдите ближе"); return false
  if not building_mode:
   for id in Frontier.NPCS:
@@ -312,7 +322,25 @@ func _perform_action(c: Vector2i) -> bool:
    _storage(building); return true
  if workshop != Vector2i(-1, -1) and Rect2i(workshop, Vector2i(3, 2)).has_point(c):
   _workshop_menu(); return true
+ var facility: String=homestead.at(c)
+ if facility!="": hud.show_facility(facility); return true
  if not building_mode:
+  if selected==10:
+   fishing.cancel()
+   if not combat.strike(player,Vector2(c*TILE+Vector2i(12,12)),day,Callable(self,"_can_stand")): return false
+   action_cooldown=0.44
+   facing=combat.aim
+   _play("swing")
+   _combat_events()
+   return true
+  if selected==11:
+   fishing.cancel()
+   if not combat.shoot(player,Vector2(c*TILE+Vector2i(12,12)),bag): _notify("Для пращи нужен камень. Дальность — 7 клеток."); return false
+   action_cooldown=0.55
+   facing=combat.aim
+   _play("swing")
+   return true
+  if selected==12: return _eat_bread()
   if selected==7: return _cast_fish(c)
   if selected==8: return _eat_berry()
   if selected==0 and Frontier.BUSHES.has(c):
@@ -327,7 +355,7 @@ func _perform_action(c: Vector2i) -> bool:
  if selected == 0:
   if plots.has(c) and plots[c].stage >= int(Crops.spec(plots[c]).days):
    var crop: String=plots[c].get("crop","turnip")
-   bag[crop]+=1
+   bag[crop]+=int(Crops.SPECS[crop].get("yield",1))
    _gain_xp(int(Crops.SPECS[crop].xp))
    plots[c] = {"stage": -1, "wet": false, "crop":""}
    quest_stage = maxi(quest_stage, 3)
@@ -351,14 +379,16 @@ func _perform_action(c: Vector2i) -> bool:
   if resources[c].hp <= 0:
    resources.erase(c)
    _gain_xp(3)
-   bag["wood" if kind == "tree" else "stone"] += 8 if kind == "tree" else 5
-   if kind=="rock" and Frontier.region(c)=="ridge": bag.ore+=2
-   _notify("+8 дерева" if kind=="tree" else "+5 камня · +2 медной руды" if Frontier.region(c)=="ridge" else "+5 камня")
+   var upgraded: bool=progression.tool_level>=4
+   bag["wood" if kind=="tree" else "stone"]+=(12 if upgraded else 8) if kind=="tree" else (8 if upgraded else 5)
+   if kind=="rock" and Frontier.region(c)=="ridge": bag.ore+=3 if upgraded else 2
+   if kind=="rock" and Frontier.region(c)=="wilds": bag.iron+=4 if upgraded else 3
+   _notify("Древесина собрана" if kind=="tree" else "Камень и железная руда собраны" if Frontier.region(c)=="wilds" else "Камень и медь собраны" if Frontier.region(c)=="ridge" else "+5 камня")
   return true
  if _solid(c): _notify("Это место занято"); return false
  if selected == 1:
   if plots.has(c): _notify("Грядка уже подготовлена"); return false
-  if Landscape.is_path(c): _notify("Оставим дорожки свободными"); return false
+  if Landscape.is_path(c) or Combat.reserved(c): _notify("Оставим дороги и древние руины свободными"); return false
   plots[c] = {"stage": -1, "wet": false}
   energy -= energy_cost
   quest_stage = maxi(quest_stage, 1)
@@ -369,10 +399,10 @@ func _perform_action(c: Vector2i) -> bool:
   plots[c].wet = true
   energy -= energy_cost
 
- elif selected in [3,6]:
+ elif selected in [3,6,9]:
   if not plots.has(c): _notify("Сначала подготовьте землю мотыгой"); return false
   if plots[c].stage != -1: _notify("На грядке уже что-то растёт"); return false
-  var seed_id: String="carrot_seeds" if selected==6 else "seeds"
+  var seed_id: String="wheat_seeds" if selected==9 else "carrot_seeds" if selected==6 else "seeds"
   if bag[seed_id]<=0: _notify("Купите семена у прилавка"); return false
   plots[c].stage = 0
   plots[c].crop=Crops.from_seed(seed_id)
@@ -380,6 +410,7 @@ func _perform_action(c: Vector2i) -> bool:
   energy -= energy_cost
   quest_stage = maxi(quest_stage, 2)
  else: return false
+ homestead.irrigate(plots)
  return true
 
 func _build_valid(c: Vector2i) -> bool:
@@ -387,52 +418,59 @@ func _build_valid(c: Vector2i) -> bool:
  for y in range(c.y, c.y + 2):
   for x in range(c.x, c.x + 3):
    var p := Vector2i(x, y)
-   if _solid(p) or plots.has(p) or Landscape.is_path(p): return false
+   if _solid(p) or plots.has(p) or Landscape.is_path(p) or Combat.reserved(p): return false
  return not area.has_point(_cell(player))
 
 func _build(c: Vector2i) -> bool:
  if build_kind == "workshop" and workshop != Vector2i(-1, -1):
   _notify("Мастерская уже построена"); return false
  if not _build_valid(c): _notify("Нужен свободный участок 3×2 без грядок и дорог"); return false
- var cost: Dictionary = Progression.BUILDINGS[build_kind]
- if bag.wood < cost.wood or bag.stone < cost.stone or coins < cost.coins:
-  _notify("Нужно: %d дерева, %d камня, %d монет" % [cost.wood, cost.stone, cost.coins]); return false
- bag.wood -= cost.wood
- bag.stone -= cost.stone
- coins -= cost.coins
- if build_kind == "workshop": workshop = c
- else:
+ if homestead.has(build_kind): _notify("Такое здание уже построено"); return false
+ var cost: Dictionary=Progression.BUILDINGS[build_kind]
+ if not _can_afford_build(): _notify("Не хватает материалов: "+hud.cost_text(cost)); return false
+ for id in ["wood","stone","planks","ingot"]: bag[id]-=int(cost.get(id,0))
+ coins-=int(cost.coins)
+ if build_kind=="workshop": workshop=c
+ elif build_kind=="warehouse":
   buildings.append(c)
-  if quest_stage < 5: _gain_xp(15)
-  quest_stage = maxi(quest_stage, 5)
+  if quest_stage<5: _gain_xp(15)
+  quest_stage=maxi(quest_stage,5)
+ else:
+  homestead.place(build_kind,c)
+  if build_kind=="well": homestead.irrigate(plots)
  _play("build")
- _notify(cost.name + " готова!" if build_kind == "workshop" else "Склад построен!")
+ _notify(cost.name+" — строительство завершено!")
  building_mode=false
  _save_game()
  return true
 
 func _sleep() -> void:
  _advance_production(1440.0 - minutes + 360.0)
+ homestead.irrigate(plots)
  if Frontier.rainy(day):
   for plot in plots.values():
    if plot.stage>=0: plot.wet=true
  fishing.cancel()
  day += 1
+ combat.health=100
+ combat.initialize(day)
  if day%3==0: _seed_frontier_resources()
  minutes = 360
  energy = 100
  for c in plots:
   if plots[c].wet and plots[c].stage >= 0: plots[c].stage = mini(int(Crops.spec(plots[c]).days), plots[c].stage + 1)
   plots[c].wet = false
+ homestead.irrigate(plots)
  modal.hide()
  _save_game()
  _notify("День %d. %s" % [day,"Дождь польёт ваши грядки." if Frontier.rainy(day) else "Новый рассвет — новые возможности."])
 
 func _sell() -> void:
- if bag.turnip <= 0 and bag.carrot<=0 and bag.crate <= 0 and bag.fish<=0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
- var earned: int = bag.turnip * 35 + bag.carrot*55 + bag.crate * 120 + bag.fish*45
+ if bag.turnip <= 0 and bag.carrot<=0 and bag.crate <= 0 and bag.fish<=0 and bag.wheat<=0: _notify("Пока нечего продавать. Репа растёт за 3 политых дня."); return
+ var earned: int = bag.turnip * 35 + bag.carrot*55 + bag.crate * 120 + bag.fish*45 + bag.wheat*12
  bag.carrot=0
  bag.fish=0
+ bag.wheat=0
  progression.crates_sold += bag.crate
  bag.crate = 0
  coins += earned
@@ -493,6 +531,10 @@ func _draw() -> void:
  objects.append({"y": SHOP.end.y * TILE, "kind": "shop", "cell": SHOP.position})
  if workshop != Vector2i(-1, -1): objects.append({"y": (workshop.y + 2) * TILE, "kind": "workshop", "cell": workshop})
  for b in buildings: objects.append({"y": (b.y + 2) * TILE, "kind": "shed", "cell": b})
+ for b in homestead.structures: objects.append({"y":(b.cell.y+2)*TILE,"kind":b.kind,"cell":b.cell})
+ objects.append({"y":Combat.RUIN.end.y*TILE,"kind":"ruin","cell":Combat.RUIN.position})
+ for mob in combat.mobs:
+  if mob.hp>0 and visible_world.has_point(mob.pos): objects.append({"y":mob.pos.y,"kind":"mob","cell":Vector2i.ZERO,"mob":mob})
  for id in Frontier.NPCS:
   var npc: Dictionary=Frontier.NPCS[id]
   if visible_world.has_point(Vector2(npc.cell*TILE)): objects.append({"y":(npc.cell.y+1)*TILE,"kind":"npc","cell":npc.cell,"id":id})
@@ -513,6 +555,18 @@ func _draw() -> void:
     if Frontier.region(item.cell)=="ridge":
      draw_line(p+Vector2(8,10),p+Vector2(13,6),Color("d0a06f"),2)
      draw_line(p+Vector2(17,12),p+Vector2(21,17),Color("a37d59"),2)
+    elif Frontier.region(item.cell)=="wilds":
+     draw_line(p+Vector2(5,9),p+Vector2(11,12),Color("d5dbc9"),2)
+     draw_line(p+Vector2(16,7),p+Vector2(21,13),Color("b9c9c0"),2)
+   "mob": combat.draw_mob(self,item.mob)
+   "bakery","well","forge":
+    draw_texture(textures[item.kind],p+Vector2(0,-32))
+    if item.kind=="well":
+     draw_circle(p+Vector2(37,22),3,Color(0.6,0.85,0.86,0.6+sin(elapsed*3)*0.2))
+    elif not homestead.jobs.is_empty():
+     var drift:=fmod(elapsed*7,24)
+     draw_circle(p+Vector2(52,-22-drift),3,Color(0.7,0.73,0.66,(1.0-drift/24)*0.6))
+   "ruin": draw_texture(textures.ruin,p+Vector2(0,-48))
    "bush": draw_texture_rect_region(textures.bush,Rect2(p+Vector2(0,-4),Vector2(24,28)),Rect2(0 if frontier.berry_ready(item.cell,day) else 24,0,24,28))
    "npc":
     var npc: Dictionary=Frontier.NPCS[item.id]
@@ -536,21 +590,22 @@ func _draw() -> void:
    "shop": _draw_shop(p)
    "player":
     var frame := int(walk_clock) % 4 if moving else 0
-    draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28)+effects.body_offset(), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32))
+    draw_texture_rect_region(textures.farmer, Rect2(player.round() - Vector2(12, 28)+effects.body_offset(), Vector2(24, 32)), Rect2(frame * 24, direction * 32, 24, 32),Color(1,0.65,0.6,0.7) if combat.immunity>0 and int(elapsed*12)%2==0 else Color.WHITE)
     effects.draw_tool(self,player.round())
  Landscape.draw_ambient(self,elapsed,minutes)
  _draw_fishing()
+ combat.draw_attacks(self)
  _draw_weather()
  if not modal.visible and not fishing.active:
   var target := hovered
-  var near := Vector2(target * TILE + Vector2i(12, 12)).distance_to(player) <= TILE * 2.25
+  var near := Vector2(target * TILE + Vector2i(12, 12)).distance_to(player) <= (180.0 if selected==11 else TILE*2.25)
   if _in_world(target) and (near or building_mode):
    var size := Vector2(72, 48) if building_mode else Vector2(24, 24)
    var valid := _build_valid(target) and near and _can_afford_build() if building_mode else (water.has(target) and energy>=4 if selected==7 else not water.has(target))
    var color := Color(0.9, 0.87, 0.66, 0.8) if valid else Color(0.88, 0.42, 0.36, 0.8)
    if building_mode:
-    var texture: Texture2D=textures.workshop if build_kind=="workshop" else textures.shed
-    draw_texture(texture,Vector2(target*TILE)+Vector2(0,-32 if build_kind=="workshop" else -24),Color(color,0.55))
+    var texture: Texture2D=textures.shed if build_kind=="warehouse" else textures[build_kind]
+    draw_texture(texture,Vector2(target*TILE)+Vector2(0,-24 if build_kind=="warehouse" else -32),Color(color,0.55))
    draw_rect(Rect2(Vector2(target * TILE), size), Color(color, 0.12), true)
    draw_rect(Rect2(Vector2(target * TILE) + Vector2.ONE, size - Vector2(2, 2)), color, false, 1)
  for part in particles: draw_rect(Rect2(part.pos.round(), Vector2(2, 2)), part.color)
@@ -627,7 +682,7 @@ func _equip(id: String) -> void:
 
 func _save_game() -> bool:
  inventory_layout.reconcile(bag)
- var data := {"version": SAVE_VERSION, "muted":muted, "orders":orders.state(), "frontier":frontier.state(), "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
+ var data := {"version": SAVE_VERSION, "combat":combat.state(), "homestead":homestead.state(), "muted":muted, "orders":orders.state(), "frontier":frontier.state(), "inventory_layout":inventory_layout.slots.duplicate(), "hotbar":hotbar.slots.duplicate(), "active_slot":hotbar.active, "player": [player.x, player.y], "day": day, "minutes": minutes, "energy": energy, "coins": coins, "bag": bag, "quest": quest_stage, "experience": experience, "stored": stored, "progression": progression.state(), "workshop": [workshop.x, workshop.y] if workshop != Vector2i(-1, -1) else null, "plots": [], "resources": [], "buildings": []}
  for c in plots: data.plots.append([c.x, c.y, plots[c].stage, plots[c].wet, plots[c].get("crop","turnip")])
  for c in resources: data.resources.append([c.x, c.y, resources[c].kind, resources[c].hp])
  for c in buildings: data.buildings.append([c.x, c.y])
@@ -673,6 +728,8 @@ func _load_game() -> bool:
  inventory_layout=InventoryLayout.new()
  inventory_layout.restore(data.get("inventory_layout",inventory_layout.slots))
  inventory_layout.reconcile(bag)
+ homestead.restore(data.get("homestead",{}))
+ combat.restore(data.get("combat",{}),day)
  frontier.restore(data.get("frontier",{}),day)
  fishing.cancel()
  orders.restore(data.get("orders",{}))
@@ -689,6 +746,7 @@ func _load_game() -> bool:
  buildings.clear()
  for row in data.buildings: buildings.append(Vector2i(int(row[0]), int(row[1])))
  if not data.has("frontier"): _seed_frontier_resources()
+ elif not data.has("combat"): _seed_frontier_resources(true)
  if not _can_stand(player): player = Vector2(19 * TILE, 17 * TILE)
  return true
 
@@ -700,6 +758,8 @@ func _valid_save(data: Variant) -> bool:
  if (data.version!=1 and data.version!=SAVE_VERSION) or not data.bag is Dictionary: return false
  if not Frontier.integer(data.day,1,10000000): return false
  if not frontier.valid(data.get("frontier",{}),int(data.day)): return false
+ if not combat.valid(data.get("combat",{}),int(data.day)): return false
+ if not homestead.valid(data.get("homestead",{})) or not _valid_homestead(data): return false
  if not orders.valid(data.get("orders",{})): return false
  if not progression.valid_state(data.get("progression", {})): return false
  if not _valid_workshop(data): return false
@@ -708,12 +768,12 @@ func _valid_save(data: Variant) -> bool:
   if not data.stored is Dictionary: return false
   for key in stored:
    if not data.stored.has(key):
-    if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot"]: continue
+    if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot", "wheat_seeds", "wheat", "bread", "iron", "ironbar", "essence"]: continue
     return false
    if not _number(data.stored[key]) or data.stored[key] < 0 or data.stored[key] > 10000000: return false
  for key in bag:
   if not data.bag.has(key):
-   if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot"]: continue
+   if key in ["planks", "crate", "carrot_seeds", "carrot", "berry", "fish", "ore", "ingot", "wheat_seeds", "wheat", "bread", "iron", "ironbar", "essence"]: continue
    return false
   if not _number(data.bag[key]) or data.bag[key] < 0 or data.bag[key] > 10000000: return false
  for key in ["day", "minutes", "energy", "coins", "quest"]:
@@ -858,6 +918,7 @@ func _self_test() -> void:
  load("res://tests/hotbar_test.gd").new().run(self)
  load("res://tests/expansion_test.gd").new().run(self)
  load("res://tests/frontier_test.gd").new().run(self)
+ load("res://tests/saga_test.gd").new().run(self)
  DirAccess.remove_absolute(save_path)
  print("ALL INTEGRATION CHECKS PASSED" if test_failures == 0 else "%d CHECKS FAILED" % test_failures)
  get_tree().quit(0 if test_failures == 0 else 1)
@@ -965,7 +1026,8 @@ func _start_recipe(id: String) -> bool:
  return true
 
 func _advance_production(game_minutes: float) -> void:
- var finished: int = progression.advance(game_minutes)
+ var new_finished: int=homestead.advance(game_minutes)
+ var finished: int = progression.advance(game_minutes)+new_finished
  if finished > 0:
   _notify("Заказ готов! Заберите продукцию в мастерской.")
   _save_game()
@@ -1044,7 +1106,10 @@ func _cancel_build() -> void:
 
 func _can_afford_build() -> bool:
  var cost: Dictionary=Progression.BUILDINGS[build_kind]
- return bag.wood>=cost.wood and bag.stone>=cost.stone and coins>=cost.coins
+ if coins<int(cost.coins): return false
+ for id in ["wood","stone","planks","ingot"]:
+  if bag[id]<int(cost.get(id,0)): return false
+ return true
 
 func _test_build(c: Vector2i) -> bool:
  building_mode=true
@@ -1070,17 +1135,17 @@ func _submit_order() -> bool:
  _notify("Заказ выполнен! +%d монет и +%d опыта"%[reward.coins,reward.xp])
  return true
 
-func _seed_frontier_resources() -> void:
+func _seed_frontier_resources(extension_only: bool=false) -> void:
  var rng:=RandomNumberGenerator.new()
  rng.seed=74819
  for y in range(3,WORLD.y-3):
   for x in range(3,WORLD.x-3):
    var c:=Vector2i(x,y)
-   if not Frontier.is_frontier(c): continue
+   if not Frontier.is_frontier(c) or (extension_only and c.x<80 and c.y<56): continue
    var chance:=rng.randf()
-   if chance>0.16 or water.has(c) or Landscape.is_path(c) or Frontier.reserved(c): continue
+   if chance>0.16 or water.has(c) or Landscape.is_path(c) or Frontier.reserved(c) or Combat.reserved(c): continue
    if _solid(c) or plots.has(c) or Vector2(c*TILE+Vector2i(12,12)).distance_to(player)<40: continue
-   resources[c]={"kind":"rock" if Frontier.region(c)=="ridge" or chance<0.03 else "tree","hp":3}
+   resources[c]={"kind":"rock" if Frontier.region(c) in ["ridge","wilds"] and chance<0.12 or chance<0.03 else "tree","hp":3}
 
 func _cast_fish(c: Vector2i) -> bool:
  if not water.has(c): _notify("Выберите воду рядом с берегом"); return false
@@ -1109,9 +1174,10 @@ func _reel_fish() -> bool:
 
 func _eat_berry() -> bool:
  if bag.berry<=0: _notify("Сначала соберите ягоды в лесу"); return false
- if energy>=100: _notify("Энергия уже полная"); return false
+ if energy>=100 and combat.health>=100: _notify("Энергия и здоровье уже полные"); return false
  bag.berry-=1
  energy=mini(100,energy+8)
+ combat.health=mini(100,combat.health+3)
  _play("pick")
  _notify("Лесная ягода · +8 энергии")
  _save_game()
@@ -1159,3 +1225,125 @@ func _toggle_sound() -> void:
  _save_game()
  if modal.visible and hud.view=="help": hud.show_help()
  _notify("Звук выключен" if muted else "Звук включён")
+
+func _shot_clear(p: Vector2) -> bool:
+ var c:=_cell(p)
+ if water.has(c): return true
+ return not _solid(c)
+
+func _combat_events() -> void:
+ if combat.events.is_empty(): return
+ var changed:=false
+ for event in combat.events:
+  if event.kind=="loot":
+   bag.iron+=int(event.iron)
+   bag.essence+=int(event.essence)
+   _gain_xp(25 if event.boss else 7)
+   _burst(_cell(event.pos),Color("b5ce99"))
+   _notify("Корневой страж повержен! +4 железа · +6 эссенции" if event.boss else "+%d железа · +%d эссенции"%[event.iron,event.essence])
+  elif event.kind=="hurt":
+   fishing.cancel()
+   _notify("Удар! −%d здоровья. Отходите во время замаха врага."%event.damage)
+   _play("hurt")
+  changed=true
+ combat.events.clear()
+ if combat.health<=0: _rescue(); return
+ if changed: _save_game()
+
+func _rescue() -> void:
+ var lost:=mini(100,coins/10)
+ coins-=lost
+ combat.health=60
+ combat.immunity=2
+ combat.cancel_attacks()
+ fishing.cancel()
+ effects.time=10
+ queued_action=null
+ player=Vector2(252,252)
+ energy=maxi(20,energy)
+ _save_game()
+ hud.show_rescue(lost)
+
+func _eat_bread() -> bool:
+ if bag.bread<=0: _notify("Испеките хлеб из пшеницы в пекарне"); return false
+ if combat.health>=100 and energy>=100: _notify("Здоровье и энергия уже полные"); return false
+ bag.bread-=1
+ combat.health=mini(100,combat.health+35)
+ energy=mini(100,energy+25)
+ _play("pick")
+ _save_game()
+ _notify("Хлеб: +35 здоровья · +25 энергии")
+ return true
+
+func _start_facility_recipe(id: String) -> bool:
+ if not Homestead.RECIPES.has(id): return false
+ var kind: String=Homestead.RECIPES[id].building
+ if not _near_facility(kind) or not homestead.start(id,bag): return false
+ _save_game()
+ hud.show_facility(kind)
+ return true
+
+func _near_facility(kind: String) -> bool:
+ for b in homestead.structures:
+  if b.kind==kind: return player.distance_to(Vector2(b.cell*TILE)+Vector2(36,36))<=TILE*3
+ return false
+
+func _collect_facility(kind: String) -> bool:
+ if not _near_facility(kind): return false
+ homestead.collect(bag)
+ _save_game()
+ hud.show_facility(kind)
+ return true
+
+func _upgrade_weapon() -> bool:
+ if not _near_facility("forge") or combat.weapon_level>=3: return false
+ var bars:=3 if combat.weapon_level==1 else 6
+ var essences:=0 if combat.weapon_level==1 else 6
+ var price:=100 if combat.weapon_level==1 else 250
+ if bag.ironbar<bars or bag.essence<essences or coins<price: return false
+ bag.ironbar-=bars;bag.essence-=essences;coins-=price
+ combat.weapon_level+=1
+ _save_game()
+ hud.show_facility("forge")
+ return true
+
+func _forge_tools() -> bool:
+ if not _near_facility("forge") or progression.tool_level!=3 or bag.ironbar<5 or coins<300: return false
+ bag.ironbar-=5;coins-=300
+ progression.tool_level=4
+ _save_game()
+ hud.show_facility("forge")
+ return true
+
+func _dismantle_facility(kind: String) -> bool:
+ if not _near_facility(kind) or not homestead.remove(kind): return false
+ var cost: Dictionary=Progression.BUILDINGS[kind]
+ for id in ["wood","stone","planks","ingot"]: bag[id]+=int(cost.get(id,0))
+ coins+=int(cost.coins)
+ modal.hide()
+ _save_game()
+ _notify("Здание разобрано. Материалы возвращены.")
+ return true
+
+func _valid_homestead(data: Dictionary) -> bool:
+ var occupied: Dictionary={}
+ for row in data.get("homestead",{}).get("structures",[]):
+  var area:=Rect2i(int(row[1]),int(row[2]),3,2)
+  for y in range(area.position.y,area.end.y):
+   for x in range(area.position.x,area.end.x):
+    var c:=Vector2i(x,y)
+    if not _in_world(c) or water.has(c) or HOUSE.has_point(c) or SHOP.has_point(c) or Landscape.is_path(c) or Combat.reserved(c) or Frontier.BUSHES.has(c) or occupied.has(c): return false
+    for npc in Frontier.NPCS.values():
+     if npc.cell==c: return false
+    occupied[c]=true
+  for key in ["plots","resources","buildings"]:
+   if not data[key] is Array: return false
+   for record in data[key]:
+    if not record is Array or record.size()<2 or not _number(record[0]) or not _number(record[1]): return false
+    var cell:=Vector2i(int(record[0]),int(record[1]))
+    if (key=="buildings" and area.intersects(Rect2i(cell,Vector2i(3,2)))) or (key!="buildings" and area.has_point(cell)): return false
+  var w: Variant=data.get("workshop")
+  if w!=null:
+   if not w is Array or w.size()!=2 or not _number(w[0]) or not _number(w[1]): return false
+   if area.intersects(Rect2i(int(w[0]),int(w[1]),3,2)): return false
+ return true

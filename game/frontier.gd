@@ -1,25 +1,26 @@
 extends RefCounted
 ## Persistent exploration and one-time villagers' requests, independent of the UI.
-const SIZE := Vector2i(80,56)
+const SIZE := Vector2i(96,64)
 const NPCS := {
  "lina":{"name":"Лина · лесничая","cell":Vector2i(49,11),"portrait":0,"item":"berry","count":6,"coins":160,"xp":25,"intro":"Лес снова открыт для прогулок. Собирайте ягоды рукой: кусты восстанавливаются через два дня. Ягоды можно съесть из хотбара — они возвращают 8 энергии.","request":"Принесите 6 лесных ягод для питомника."},
  "sava":{"name":"Савва · рыбак","cell":Vector2i(64,25),"portrait":1,"item":"fish","count":3,"coins":240,"xp":30,"intro":"Удочка уже лежит в рюкзаке. Назначьте её на хотбар и нажмите на воду рядом. Дождитесь зелёной полосы и нажмите E или кнопку действия. В окнах время рыбалки останавливается.","request":"Поймайте и принесите 3 рыбы для нашего причала."},
  "boris":{"name":"Борис · каменщик","cell":Vector2i(57,40),"portrait":2,"item":"ingot","count":3,"coins":360,"xp":40,"intro":"В каменном кряже из валунов выпадает медная руда. В мастерской переплавьте 3 руды и 1 дерево в слиток. Дикие ресурсы восстанавливаются раз в три дня, ферму они не затрагивают.","request":"Для ремонта инструментов нужны 3 медных слитка."}
 }
 const BUSHES := [Vector2i(49,8),Vector2i(51,10),Vector2i(50,17),Vector2i(53,19),Vector2i(58,8),Vector2i(61,10),Vector2i(58,27),Vector2i(69,28),Vector2i(72,19),Vector2i(68,8),Vector2i(47,37),Vector2i(50,41)]
-const REGIONS := {"farm":"Усадьба", "forest":"Сосновый лес", "lake":"Лазурное озеро", "ridge":"Каменный кряж"}
+const REGIONS := {"farm":"Усадьба", "forest":"Сосновый лес", "lake":"Лазурное озеро", "ridge":"Каменный кряж", "wilds":"Дикие руины"}
 var completed: Array = []
 var picked: Dictionary = {}
 var visited: Array = ["farm"]
 var catches := 0
 static func region(c: Vector2i) -> String:
+ if c.x>=78: return "wilds"
  if c.x>=48 and c.y>=33: return "ridge"
  if c.x>=58 and c.y>=14 and c.y<33: return "lake"
  if c.x>=46 or c.y>=36: return "forest"
  return "farm"
 static func is_frontier(c: Vector2i) -> bool: return c.x>=48 or c.y>=36
 static func is_path(c: Vector2i) -> bool:
- return (c.y in [12,13] and c.x>=34 and c.x<=72) or (c.x in [54,55] and c.y>=14 and c.y<=45) or (c.y in [25,26] and c.x>=56 and c.x<=64) or (c.y in [40,41] and c.x>=56 and c.x<=61)
+ return (c.y in [12,13] and c.x>=73 and c.x<=90) or (c.x in [82,83] and c.y>=14 and c.y<=56) or (c.y in [51,52] and c.x>=84 and c.x<=92) or (c.y in [12,13] and c.x>=34 and c.x<=72) or (c.x in [54,55] and c.y>=14 and c.y<=45) or (c.y in [25,26] and c.x>=56 and c.x<=64) or (c.y in [40,41] and c.x>=56 and c.x<=61)
 static func reserved(c: Vector2i) -> bool:
  if BUSHES.has(c): return true
  for npc in NPCS.values():

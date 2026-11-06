@@ -3,11 +3,11 @@ from PIL import Image,ImageDraw,ImageFilter,ImageChops,ImageColor
 from pathlib import Path
 import random,math,json
 root=Path(__file__).resolve().parents[1];a=root/'art';r=random.Random(4096)
-T=24;W,H=80*T,56*T
+T=24;W,H=96*T,64*T
 water={tuple(p) for p in json.loads((root/'game/water.json').read_text())}
 water|={(x,y) for y in range(1,55) for x in range(48,79) if ((x-65)/7)**2+((y-19)/4.5)**2<1 or ((x-51)/3)**2+((y-47)/2.5)**2<1}
 (root/'game/water.json').write_text(json.dumps(sorted(water)))
-def path(x,y):return (y in (12,13) and 34<=x<=72) or (x in (54,55) and 14<=y<=45) or (y in (25,26) and 56<=x<=64) or (y in (40,41) and 56<=x<=61) or (y in (12,13) and 6<=x<=33)or(x in (22,23) and 14<=y<=31)or(9<=x<=11 and 10<=y<=11)or(27<=x<=29 and y==11)
+def path(x,y):return (y in (12,13) and 73<=x<=90) or (x in (82,83) and 14<=y<=56) or (y in (51,52) and 84<=x<=92) or (y in (12,13) and 34<=x<=72) or (x in (54,55) and 14<=y<=45) or (y in (25,26) and 56<=x<=64) or (y in (40,41) and 56<=x<=61) or (y in (12,13) and 6<=x<=33)or(x in (22,23) and 14<=y<=31)or(9<=x<=11 and 10<=y<=11)or(27<=x<=29 and y==11)
 im=Image.new('RGB',(W,H),'#799655');d=ImageDraw.Draw(im)
 # Low-frequency patches break up the tile grid; small marks are intentionally sparse.
 colors=['#789552','#7b9856','#809d59','#759351','#829e59']
@@ -24,11 +24,14 @@ for y in range(0,H,2):
   forest=max(smooth((x/T-44+math.sin(y/85)*1.4)/8),smooth((y/T-32+math.sin(x/90))/8))
   ridge=smooth((x/T-46+math.sin(y/97))/8)*smooth((y/T-30+math.sin(x/101)*1.6)/8)
   color=tuple(round((base_rgb[k][i]*(1-forest)+forest_rgb[k][i]*forest)*(1-ridge)+ridge_rgb[k][i]*ridge) for i in range(3))
+  wild=smooth((x/T-74+math.sin(y/93))/8)
+  wild_color=(98+k*2,117+k*2,100+k*2)
+  color=tuple(round(color[i]*(1-wild)+wild_color[i]*wild) for i in range(3))
   d.rectangle((x,y,x+1,y+1),fill=color)
 pm=Image.new('L',(W,H));pd=ImageDraw.Draw(pm)
 wm=Image.new('L',(W,H));wd=ImageDraw.Draw(wm)
-for y in range(56):
- for x in range(80):
+for y in range(64):
+ for x in range(96):
   if path(x,y):pd.rectangle((x*T,y*T,x*T+23,y*T+23),fill=255)
   if (x,y) in water:wd.rectangle((x*T,y*T,x*T+23,y*T+23),fill=255)
 im.paste('#718d4d',mask=pm.filter(ImageFilter.MaxFilter(7)))
@@ -36,7 +39,7 @@ im.paste('#a49065',mask=pm.filter(ImageFilter.MaxFilter(3)))
 im.paste('#c5b17c',mask=pm)
 # Single-pixel worn stones, soft wheel ruts and grass tufts.
 d=ImageDraw.Draw(im)
-for i in range(28500):
+for i in range(35000):
  x,y=r.randrange(3,W-3),r.randrange(3,H-3)
  if pm.getpixel((x,y)):
   if r.random()<.4:d.line((x,y,x+r.randrange(1,3),y),fill=r.choice(['#b6a26e','#d0bc89','#bdab76']))
@@ -76,6 +79,17 @@ for x in range(63*T,67*T,7):
  d.rectangle((x,24*T,x+5,25*T-2),fill='#a4865b');d.line((x,24*T,x,25*T-2),fill='#d2b383')
 for x,y in [(44,12),(54,32),(63,26)]:
  px=x*T;py=y*T;d.rectangle((px+10,py-4,px+12,py+13),fill='#816443');d.polygon([(px+3,py-8),(px+20,py-8),(px+23,py-4),(px+20,py),(px+3,py)],fill='#c0a375',outline='#79613f');d.line((px+7,py-4,px+17,py-4),fill='#79613f')
+# Weathered paving, small stones and old roots mark the wild region.
+for cx,cy in [(81,16),(86,19),(89,29),(80,38),(87,43),(90,52)]:
+ px=cx*T+12;py=cy*T+12
+ d.ellipse((px-35,py-25,px+35,py+25),fill='#89977c')
+ for j in range(14):
+  x=px+r.randrange(-32,33);y=py+r.randrange(-20,21)
+  d.rectangle((x,y,x+4,y+2),fill=r.choice(['#a5af95','#768b74','#bec1a1']))
+ d.arc((px-22,py-18,px+22,py+18),15,320,fill='#b2bb96',width=2)
+for i in range(90):
+ x=r.randrange(78*T,94*T);y=r.randrange(3*T,61*T)
+ if not path(x//T,y//T):d.line((x,y,x+6,y-2,x+9,y+1),fill='#536d5c',width=2)
 # Visible boundary fences lie entirely in the non-walkable outer cell ring.
 for x in range(12,W,24):
  for y in [10,H-12]:

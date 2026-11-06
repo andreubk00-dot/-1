@@ -3,7 +3,10 @@ extends RefCounted
 ## Inventory is charged only after all prerequisites have been checked.
 const BUILDINGS := {
  "warehouse": {"name": "Склад", "wood": 20, "stone": 10, "coins": 0},
- "workshop": {"name": "Мастерская", "wood": 40, "stone": 20, "coins": 60}
+ "workshop": {"name": "Мастерская", "wood": 40, "stone": 20, "coins": 60},
+ "bakery":{"name":"Пекарня","wood":30,"stone":20,"coins":100},
+ "well":{"name":"Колодец-дождеватель","wood":0,"stone":35,"coins":100,"planks":6,"ingot":2},
+ "forge":{"name":"Кузница","wood":0,"stone":30,"coins":200,"planks":10,"ingot":4}
 }
 const RECIPES := {
  "planks": {"name": "Доски", "cost": {"wood": 4}, "output": "planks", "count": 2, "minutes": 30.0},
@@ -76,7 +79,7 @@ func valid_state(value: Variant) -> bool:
  if value.is_empty(): return true # Compatibility with pre-production saves.
  for key in ["tool_level", "jobs", "products", "crates_sold"]:
   if not value.has(key): return false
- if not _integer(value.tool_level, 1, 3) or not _integer(value.crates_sold, 0, 10000000): return false
+ if not _integer(value.tool_level, 1, 4) or not _integer(value.crates_sold, 0, 10000000): return false
  if not value.jobs is Array or value.jobs.size() > MAX_QUEUE: return false
  for job in value.jobs:
   if not job is Dictionary or not job.has("recipe") or not job.has("remaining"): return false

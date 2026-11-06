@@ -5,3 +5,4 @@ python3 tools/make_art.py
 python3 tools/make_ui_art.py
 python3 tools/make_environment.py
 python3 tools/make_frontier_art.py
+python3 tools/make_saga_art.py

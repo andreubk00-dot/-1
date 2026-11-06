@@ -1,9 +1,9 @@
 {
   "name": "quiet-valley",
-  "version": "0.9.0-rc.1",
+  "version": "0.10.0",
   "private": true,
   "scripts": {
-    "test:web": "node tests/web.test.cjs && node tests/workshop.web.test.cjs && node tests/hud.web.test.cjs && node tests/expansion.web.test.cjs && node tests/frontier.web.test.cjs",
+    "test:web": "node tests/web.test.cjs && node tests/workshop.web.test.cjs && node tests/hud.web.test.cjs && node tests/expansion.web.test.cjs && node tests/frontier.web.test.cjs && node tests/saga.web.test.cjs",
     "build:web": "bash tools/build-web.sh"
   },
   "devDependencies": {
